@@ -80,7 +80,7 @@ finds.
 
 | Command | What it does |
 |---|---|
-| `rctx new [id]` | Create a new claim file from a template (id defaults to a generated UUID) |
+| `rctx new [id]` | Create a new claim file from a template (id defaults to a UTC timestamp) |
 | `rctx list` | Print every claim as JSON |
 | `rctx index` | Rebuild the local search index from claim files |
 | `rctx query "<expr>"` | Full-text search claims |
@@ -106,13 +106,13 @@ in and a `TODO` body to replace. Pass `--template <file>` to render from your
 own template instead of the built-in one; `--force` overwrites an existing
 claim file.
 
-Omit `id` and rctx generates one: a UUID whose timestamp bits are stored
-inverted, so plain alphabetical order (`ls .rctx/claims`, `rctx list`) reads
-newest-to-oldest with no extra sort step.
+Omit `id` and rctx generates one from the current UTC date and time plus a
+short random suffix, so it's legible on sight and sorts in creation order
+alongside your other claim files.
 
 ```bash
 rctx new --scope build --watch .env.example
-# -> created .rctx/claims/fe60b818-ff35-89b5-a06a-ba70c78309bd.md
+# -> created .rctx/claims/20260709-153245-a1b2c3.md
 ```
 
 A claim is Markdown with YAML frontmatter:
