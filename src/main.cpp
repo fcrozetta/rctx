@@ -1,4 +1,5 @@
 // rctx PoC - repo context CLI.
+//   new      - create a new claim file from a template
 //   list     - walk .rctx/claims/** and emit parsed claims as JSON
 //   index    - build the derived FTS index from claims
 //   query    - full-text search the index
@@ -14,7 +15,9 @@
 #include <filesystem>
 #include <fstream>
 #include <iostream>
+#include <sstream>
 #include <string>
+#include <system_error>
 
 #include <fnmatch.h>
 
@@ -23,6 +26,7 @@
 #include <nlohmann/json.hpp>
 
 #include "claim.hpp"
+#include "claim_id.hpp"
 #include "git.hpp"
 #include "index.hpp"
 #include "registry.hpp"
@@ -111,6 +115,25 @@ int main(int argc, char** argv) {
   std::string repo_path = ".";
   std::string base_ref = "main";
 
+  std::string new_id, new_scope = "general", new_volatility = "stable", template_path;
+  std::vector<std::string> new_watches;
+  bool force = false;
+  auto* newcmd = app.add_subcommand("new", "create a new claim from a template");
+  newcmd->add_option("id", new_id,
+                      "claim id, used as the file name under the claims dir "
+                      "(defaults to a UTC timestamp id, e.g. 20260709-153245-a1b2c3)");
+  newcmd->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
+  newcmd->add_option("--scope", new_scope, "claim scope")->capture_default_str();
+  newcmd->add_option("--volatility", new_volatility, "\"stable\" or \"volatile\"")
+      ->capture_default_str();
+  // allow_extra_args(false): each --watch takes exactly one value, so a
+  // positional id following a --watch is not swallowed into the watch list.
+  newcmd->add_option("--watch", new_watches, "watched path (repeatable)")
+      ->allow_extra_args(false);
+  newcmd->add_option("--template", template_path,
+                      "path to a claim template file (defaults to the built-in template)");
+  newcmd->add_flag("--force", force, "overwrite the claim file if it already exists");
+
   auto* list = app.add_subcommand("list", "parse claim files and print them as JSON");
   list->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
 
@@ -149,7 +172,68 @@ int main(int argc, char** argv) {
 
   GitRuntime git_runtime;
 
-  if (*list) {
+  if (*newcmd) {
+    if (new_id.empty()) new_id = rctx::new_claim_id();
+    if (new_id.find("..") != std::string::npos || fs::path(new_id).is_absolute()) {
+      std::cerr << "error: invalid claim id: " << new_id << std::endl;
+      return 1;
+    }
+    if (new_volatility != "stable" && new_volatility != "volatile") {
+      std::cerr << "error: --volatility must be \"stable\" or \"volatile\"" << std::endl;
+      return 1;
+    }
+
+    std::string tmpl;
+    if (template_path.empty()) {
+      tmpl = rctx::default_claim_template();
+    } else {
+      std::ifstream in(template_path);
+      if (!in) {
+        std::cerr << "error: template not found: " << template_path << std::endl;
+        return 1;
+      }
+      std::stringstream buf;
+      buf << in.rdbuf();
+      tmpl = buf.str();
+    }
+
+    const fs::path out_path = fs::path(claims_dir) / (new_id + ".md");
+    if (fs::exists(out_path) && !force) {
+      std::cerr << "error: claim already exists: " << out_path.string()
+                << " (use --force to overwrite)" << std::endl;
+      return 1;
+    }
+
+    const std::string rendered =
+        rctx::render_claim_template(tmpl, new_id, new_scope, new_volatility, new_watches);
+    const auto parsed = rctx::parse_claim_text(rendered, out_path.string());
+    if (!parsed) {
+      std::cerr << "error: rendered claim has no valid frontmatter; check --template"
+                << std::endl;
+      return 1;
+    }
+
+    std::error_code ec;
+    fs::create_directories(out_path.parent_path(), ec);
+    if (ec) {
+      std::cerr << "error: could not create " << out_path.parent_path().string() << ": "
+                << ec.message() << std::endl;
+      return 1;
+    }
+
+    std::ofstream out(out_path, std::ios::trunc);
+    out << rendered;
+    out.close();
+    if (!out) {
+      std::cerr << "error: could not write claim: " << out_path.string() << std::endl;
+      return 1;
+    }
+
+    std::cerr << "created " << out_path.string() << std::endl;
+    nlohmann::json j;
+    rctx::to_json(j, *parsed);
+    std::cout << j.dump(2) << std::endl;
+  } else if (*list) {
     nlohmann::json out = nlohmann::json::array();
     for (const auto& c : rctx::load_claims(claims_dir)) {
       nlohmann::json j;

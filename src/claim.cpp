@@ -44,35 +44,115 @@ std::string trim(const std::string& s) {
   return s.substr(b, e - b + 1);
 }
 
+// Render `s` as a YAML double-quoted scalar so template values containing
+// metacharacters (`*` reads as an alias, `#`/`:`/`[`/`]` etc. can change how
+// the line parses) always round-trip as the literal string the caller gave.
+std::string yaml_quote(const std::string& s) {
+  std::string out = "\"";
+  for (char c : s) {
+    switch (c) {
+      case '\\': out += "\\\\"; break;
+      case '"': out += "\\\""; break;
+      case '\n': out += "\\n"; break;
+      case '\t': out += "\\t"; break;
+      case '\r': out += "\\r"; break;
+      default: out += c;
+    }
+  }
+  out += '"';
+  return out;
+}
+
 }  // namespace
+
+std::string default_claim_template() {
+  return
+      "---\n"
+      "id: {{id}}\n"
+      "scope: {{scope}}\n"
+      "volatility: {{volatility}}\n"
+      "{{watches_block}}\n"
+      "reverify: \"\"\n"
+      "---\n"
+      "\n"
+      "TODO: describe the assumption this claim records.\n";
+}
+
+std::string render_claim_template(const std::string& tmpl, const std::string& id,
+                                   const std::string& scope, const std::string& volatility,
+                                   const std::vector<std::string>& watches) {
+  std::string watches_block;
+  if (watches.empty()) {
+    watches_block = "watches: []";
+  } else {
+    watches_block = "watches:";
+    for (const auto& w : watches) watches_block += "\n  - " + yaml_quote(w);
+  }
+
+  const std::vector<std::pair<std::string, std::string>> vars = {
+      {"{{id}}", yaml_quote(id)},
+      {"{{scope}}", yaml_quote(scope)},
+      {"{{volatility}}", yaml_quote(volatility)},
+      {"{{watches_block}}", watches_block},
+  };
+
+  // Single pass: each placeholder is expanded exactly once and the substituted
+  // value is never rescanned, so a value that happens to contain "{{scope}}"
+  // (or any other placeholder text) is emitted literally rather than being
+  // re-substituted. Unknown "{{...}}" runs are copied through untouched.
+  std::string out;
+  out.reserve(tmpl.size());
+  for (size_t i = 0; i < tmpl.size();) {
+    bool matched = false;
+    if (tmpl[i] == '{') {
+      for (const auto& [key, value] : vars) {
+        if (tmpl.compare(i, key.size(), key) == 0) {
+          out += value;
+          i += key.size();
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (!matched) out += tmpl[i++];
+  }
+  return out;
+}
 
 std::optional<Claim> parse_claim_text(const std::string& text, const std::string& source_label) {
   std::string fm_text, body;
   if (!split_frontmatter(text, fm_text, body)) return std::nullopt;
 
-  YAML::Node fm = YAML::Load(fm_text);
-  Claim c;
-  c.source_path = source_label;
-  c.body = trim(body);
-  if (fm["id"]) c.id = fm["id"].as<std::string>();
-  if (fm["scope"]) c.scope = fm["scope"].as<std::string>();
-  if (fm["volatility"]) c.volatility = fm["volatility"].as<std::string>();
-  if (fm["reverify"]) c.reverify = fm["reverify"].as<std::string>();
+  try {
+    YAML::Node fm = YAML::Load(fm_text);
+    Claim c;
+    c.source_path = source_label;
+    c.body = trim(body);
+    if (fm["id"]) c.id = fm["id"].as<std::string>();
+    if (fm["scope"]) c.scope = fm["scope"].as<std::string>();
+    if (fm["volatility"]) c.volatility = fm["volatility"].as<std::string>();
+    if (fm["reverify"]) c.reverify = fm["reverify"].as<std::string>();
 
-  if (fm["watches"]) {
-    for (const auto& w : fm["watches"]) c.watches.push_back(w.as<std::string>());
-  }
-  if (fm["impacts"]) {
-    for (const auto& node : fm["impacts"]) {
-      ImpactRef ref;
-      if (node["url"]) ref.url = node["url"].as<std::string>();
-      if (node["terms"]) {
-        for (const auto& t : node["terms"]) ref.terms.push_back(t.as<std::string>());
-      }
-      c.impacts.push_back(std::move(ref));
+    if (fm["watches"]) {
+      for (const auto& w : fm["watches"]) c.watches.push_back(w.as<std::string>());
     }
+    if (fm["impacts"]) {
+      for (const auto& node : fm["impacts"]) {
+        ImpactRef ref;
+        if (node["url"]) ref.url = node["url"].as<std::string>();
+        if (node["terms"]) {
+          for (const auto& t : node["terms"]) ref.terms.push_back(t.as<std::string>());
+        }
+        c.impacts.push_back(std::move(ref));
+      }
+    }
+    return c;
+  } catch (const YAML::Exception&) {
+    // Malformed YAML or a field of the wrong type (e.g. a sequence where a
+    // string is expected). Treat like absent frontmatter rather than
+    // crashing the CLI on one bad claim file.
+    return std::nullopt;
   }
-  return c;
 }
 
 std::optional<Claim> parse_claim_file(const fs::path& file) {
