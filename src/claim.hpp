@@ -30,12 +30,14 @@ struct Claim {
   std::string source_path;         // file the claim was loaded from
 };
 
-// Parse claim text (Markdown + frontmatter). Returns nullopt if no frontmatter.
-// `source_label` is recorded as the claim's source_path (a file path or a
-// "<repo>@<ref>:<path>" label for claims read out of a git tree).
+// Parse claim text (Markdown + frontmatter). Returns nullopt if there is no
+// frontmatter, or if the frontmatter is malformed YAML or has a field of the
+// wrong type. `source_label` is recorded as the claim's source_path (a file
+// path or a "<repo>@<ref>:<path>" label for claims read out of a git tree).
 std::optional<Claim> parse_claim_text(const std::string& text, const std::string& source_label);
 
-// Parse a single claim file. Returns nullopt if the file has no frontmatter.
+// Parse a single claim file. Returns nullopt if the file has no frontmatter
+// or fails to parse (see parse_claim_text).
 std::optional<Claim> parse_claim_file(const std::filesystem::path& file);
 
 // Recursively load every *.md claim under `claims_dir`.

@@ -108,29 +108,36 @@ std::optional<Claim> parse_claim_text(const std::string& text, const std::string
   std::string fm_text, body;
   if (!split_frontmatter(text, fm_text, body)) return std::nullopt;
 
-  YAML::Node fm = YAML::Load(fm_text);
-  Claim c;
-  c.source_path = source_label;
-  c.body = trim(body);
-  if (fm["id"]) c.id = fm["id"].as<std::string>();
-  if (fm["scope"]) c.scope = fm["scope"].as<std::string>();
-  if (fm["volatility"]) c.volatility = fm["volatility"].as<std::string>();
-  if (fm["reverify"]) c.reverify = fm["reverify"].as<std::string>();
+  try {
+    YAML::Node fm = YAML::Load(fm_text);
+    Claim c;
+    c.source_path = source_label;
+    c.body = trim(body);
+    if (fm["id"]) c.id = fm["id"].as<std::string>();
+    if (fm["scope"]) c.scope = fm["scope"].as<std::string>();
+    if (fm["volatility"]) c.volatility = fm["volatility"].as<std::string>();
+    if (fm["reverify"]) c.reverify = fm["reverify"].as<std::string>();
 
-  if (fm["watches"]) {
-    for (const auto& w : fm["watches"]) c.watches.push_back(w.as<std::string>());
-  }
-  if (fm["impacts"]) {
-    for (const auto& node : fm["impacts"]) {
-      ImpactRef ref;
-      if (node["url"]) ref.url = node["url"].as<std::string>();
-      if (node["terms"]) {
-        for (const auto& t : node["terms"]) ref.terms.push_back(t.as<std::string>());
-      }
-      c.impacts.push_back(std::move(ref));
+    if (fm["watches"]) {
+      for (const auto& w : fm["watches"]) c.watches.push_back(w.as<std::string>());
     }
+    if (fm["impacts"]) {
+      for (const auto& node : fm["impacts"]) {
+        ImpactRef ref;
+        if (node["url"]) ref.url = node["url"].as<std::string>();
+        if (node["terms"]) {
+          for (const auto& t : node["terms"]) ref.terms.push_back(t.as<std::string>());
+        }
+        c.impacts.push_back(std::move(ref));
+      }
+    }
+    return c;
+  } catch (const YAML::Exception&) {
+    // Malformed YAML or a field of the wrong type (e.g. a sequence where a
+    // string is expected). Treat like absent frontmatter rather than
+    // crashing the CLI on one bad claim file.
+    return std::nullopt;
   }
-  return c;
 }
 
 std::optional<Claim> parse_claim_file(const fs::path& file) {
