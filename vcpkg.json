@@ -1,7 +1,7 @@
 {
   "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
   "name": "rctx",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "description": "Repo ConTeXt - repository-bounded context and claims for coding agents",
   "builtin-baseline": "81ded1ca9f81437a39dc520c653f3006953308f3",
   "dependencies": [

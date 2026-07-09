@@ -27,6 +27,10 @@
 #include "index.hpp"
 #include "registry.hpp"
 
+#ifndef RCTX_VERSION
+#define RCTX_VERSION "0.0.0-dev"
+#endif
+
 namespace fs = std::filesystem;
 
 namespace {
@@ -99,7 +103,7 @@ struct GitRuntime {
 
 int main(int argc, char** argv) {
   CLI::App app{"rctx - repository-bounded context and claims"};
-  app.set_version_flag("--version", std::string{"rctx 0.0.1"});
+  app.set_version_flag("--version", std::string{RCTX_VERSION});
   app.require_subcommand(1);
 
   std::string claims_dir = ".rctx/claims";

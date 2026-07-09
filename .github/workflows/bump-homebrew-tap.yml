@@ -1,0 +1,204 @@
+name: Bump Homebrew tap formula
+
+on:
+  workflow_run:
+    workflows: ["release"]
+    types: [completed]
+
+
+permissions:
+  contents: read
+
+jobs:
+  bump:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      TAP_REPO: fcrozetta/homebrew-tools
+      FORMULA_PATH: Formula/rctx.rb
+      TOOL: rctx
+
+    steps:
+      - name: Read version + sha256 assets
+        id: meta
+        run: |
+          set -euo pipefail
+          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
+          HEAD_REF="${{ github.event.workflow_run.head_branch }}"
+
+          VERSION=""
+          if [[ "${HEAD_REF}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            if git ls-remote --tags "https://github.com/${{ github.repository }}.git"               "refs/tags/${HEAD_REF}" "refs/tags/${HEAD_REF}^{}"               | awk -v sha="${HEAD_SHA}" '$1 == sha { found = 1 } END { exit(found ? 0 : 1) }'; then
+              VERSION="${HEAD_REF}"
+            else
+              echo "workflow_run.head_branch (${HEAD_REF}) is semver but does not resolve to head SHA ${HEAD_SHA}" >&2
+              exit 1
+            fi
+          fi
+
+          if [[ -z "${VERSION}" ]]; then
+            mapfile -t MATCHING_TAGS < <(
+              git ls-remote --tags "https://github.com/${{ github.repository }}.git"                 | awk -v sha="${HEAD_SHA}" '$1 == sha {
+                    ref = $2
+                    sub("^refs/tags/", "", ref)
+                    sub("\^\{\}$", "", ref)
+                    if (ref ~ /^[0-9]+\.[0-9]+\.[0-9]+$/) print ref
+                  }'                 | sort -u
+            )
+
+            if [[ "${#MATCHING_TAGS[@]}" -eq 1 ]]; then
+              VERSION="${MATCHING_TAGS[0]}"
+            elif [[ "${#MATCHING_TAGS[@]}" -gt 1 ]]; then
+              echo "Ambiguous semver tags for head SHA ${HEAD_SHA}: ${MATCHING_TAGS[*]}" >&2
+              echo "workflow_run.head_branch=${HEAD_REF}" >&2
+              exit 1
+            fi
+          fi
+
+          if [[ -z "${VERSION}" || ! "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Unable to resolve semver release tag for workflow_run head SHA ${HEAD_SHA}" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_url=https://github.com/${{ github.repository }}/releases/tag/${VERSION}" >> "$GITHUB_OUTPUT"
+
+          base="https://github.com/${{ github.repository }}/releases/download/${VERSION}"
+
+          get_sha () {
+            local suffix="$1"
+            local url="${base}/${TOOL}-${VERSION}-${suffix}.tar.gz.sha256"
+            echo "Fetching ${url}" >&2
+            local line
+            line="$(curl -fsSL "${url}")"
+            local sha
+            sha="$(echo "${line}" | awk '{print $1}')"
+            if [[ ! "${sha}" =~ ^[0-9a-fA-F]{64}$ ]]; then
+              echo "Bad sha256 for ${suffix}: ${line}" >&2
+              exit 1
+            fi
+            echo "${sha}"
+          }
+
+          sha_darwin_arm64="$(get_sha darwin-arm64)"
+          sha_linux_amd64="$(get_sha linux-amd64)"
+          sha_linux_arm64="$(get_sha linux-arm64)"
+
+          {
+            echo "sha_darwin_arm64=${sha_darwin_arm64}"
+            echo "sha_linux_amd64=${sha_linux_amd64}"
+            echo "sha_linux_arm64=${sha_linux_arm64}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.TAP_REPO }}
+          token: ${{ secrets.PAT_BREW_SCOOP_GITHUB_TOKEN }}
+          path: tap
+          fetch-depth: 0
+
+      - name: Patch formula (version + sha256 next to each URL)
+        working-directory: tap
+        env:
+          FORMULA_PATH: ${{ env.FORMULA_PATH }}
+          VERSION: ${{ steps.meta.outputs.version }}
+          SHA_DARWIN_ARM64: ${{ steps.meta.outputs.sha_darwin_arm64 }}
+          SHA_LINUX_AMD64: ${{ steps.meta.outputs.sha_linux_amd64 }}
+          SHA_LINUX_ARM64: ${{ steps.meta.outputs.sha_linux_arm64 }}
+          TOOL: ${{ env.TOOL }}
+        run: |
+          set -euo pipefail
+          test -f "${FORMULA_PATH}"
+
+          python3 - << 'PY'
+          import os
+          import re
+          import sys
+
+          path = os.environ["FORMULA_PATH"]
+          tool = os.environ["TOOL"]
+          version = os.environ["VERSION"]
+
+          want = {
+            "darwin-arm64": os.environ["SHA_DARWIN_ARM64"],
+            "linux-amd64": os.environ["SHA_LINUX_AMD64"],
+            "linux-arm64": os.environ["SHA_LINUX_ARM64"],
+          }
+
+          with open(path, "r", encoding="utf-8") as f:
+            lines = f.read().splitlines()
+
+          # 1) bump version line
+          version_re = re.compile(r'^\s*version\s+"[^"]+"\s*$')
+          version_idx = [i for i, line in enumerate(lines) if version_re.match(line)]
+          if len(version_idx) != 1:
+            print(f"Expected exactly one version line, got {len(version_idx)}", file=sys.stderr)
+            sys.exit(1)
+          lines[version_idx[0]] = f'  version "{version}"'
+
+          # 2) locate release URLs by suffix and patch the following sha256 line in the same stanza
+          url_re = re.compile(
+            rf'^(?P<indent>\s*)url\s+"[^"]*/{re.escape(tool)}-'
+            r'(?:#\{version\}|[0-9]+\.[0-9]+\.[0-9]+)-'
+            r'(?P<suffix>darwin-arm64|linux-amd64|linux-arm64)\.tar\.gz"\s*$'
+          )
+          sha_re = re.compile(r'^(?P<indent>\s*)sha256\s+"[0-9a-fA-F]{64}"\s*$')
+
+          patched = set()
+          for i, line in enumerate(lines):
+            m = url_re.match(line)
+            if not m:
+              continue
+
+            suffix = m.group("suffix")
+            if suffix not in want:
+              continue
+            if suffix in patched:
+              print(f"Duplicate url stanza for suffix {suffix}", file=sys.stderr)
+              sys.exit(1)
+
+            sha_idx = None
+            for j in range(i + 1, len(lines)):
+              if re.match(r'^\s*url\s+"', lines[j]):
+                break
+              if sha_re.match(lines[j]):
+                sha_idx = j
+                break
+
+            if sha_idx is None:
+              print(f"Could not find sha256 after url for suffix {suffix}", file=sys.stderr)
+              sys.exit(1)
+
+            sha_indent = sha_re.match(lines[sha_idx]).group("indent")
+            lines[sha_idx] = f'{sha_indent}sha256 "{want[suffix]}"'
+            patched.add(suffix)
+
+          missing = sorted(set(want.keys()) - patched)
+          if missing:
+            print(f"Missing url stanzas for suffixes: {', '.join(missing)}", file=sys.stderr)
+            sys.exit(1)
+
+          with open(path, "w", encoding="utf-8") as f:
+            f.write("\n".join(lines) + "\n")
+
+          print("Patched", path)
+          PY
+
+          git diff -- "${FORMULA_PATH}"
+
+      - name: Create PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.PAT_BREW_SCOOP_GITHUB_TOKEN }}
+          path: tap
+          commit-message: "rctx: bump to ${{ steps.meta.outputs.version }}"
+          branch: "bump/rctx-${{ steps.meta.outputs.version }}"
+          title: "rctx: bump to ${{ steps.meta.outputs.version }}"
+          body: |
+            Automated bump from GitHub Release:
+            - Version: `${{ steps.meta.outputs.version }}`
+            - darwin-arm64 sha256: `${{ steps.meta.outputs.sha_darwin_arm64 }}`
+            - linux-amd64 sha256: `${{ steps.meta.outputs.sha_linux_amd64 }}`
+            - linux-arm64 sha256: `${{ steps.meta.outputs.sha_linux_arm64 }}`
+
+            Release: ${{ steps.meta.outputs.release_url }}
