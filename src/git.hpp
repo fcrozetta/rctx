@@ -28,4 +28,8 @@ std::string default_branch_ref(const std::filesystem::path& repo_path);
 std::vector<std::pair<std::string, std::string>> read_files_at_ref(
     const std::filesystem::path& repo_path, const std::string& ref, const std::string& subdir);
 
+// Absolute path to the repo's hooks directory (the common dir's hooks, so
+// worktrees share the same hooks). Empty if the repo cannot be opened.
+std::string hooks_dir(const std::filesystem::path& repo_path);
+
 }  // namespace rctx

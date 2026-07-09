@@ -154,4 +154,12 @@ std::vector<std::pair<std::string, std::string>> read_files_at_ref(
   return out;
 }
 
+std::string hooks_dir(const fs::path& repo_path) {
+  Repo repo = open_repo(repo_path);
+  if (!repo) return "";
+  const char* common = git_repository_commondir(repo.get());
+  if (!common) return "";
+  return (fs::path{common} / "hooks").string();
+}
+
 }  // namespace rctx

@@ -6,12 +6,17 @@
 //   drift    - claims whose watched paths changed vs the base ref
 //   register - record this repo in the host-global registry
 //   repos    - list registered repos
-//   impact   - claims in OTHER registered repos that declare impact on this one
+//   impact   - inbound: claims in other repos that impact this one
+//              (--outbound: claims in this repo that impact others)
+//   hook     - install git hooks that refresh registration
 
 #include <algorithm>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string>
+
+#include <fnmatch.h>
 
 #include <CLI/CLI.hpp>
 #include <git2.h>
@@ -26,16 +31,23 @@ namespace fs = std::filesystem;
 
 namespace {
 
-bool watch_matches(const std::string& watch, const std::string& changed) {
-  if (watch == changed) return true;
-  if (changed.size() > watch.size() &&
-      changed.compare(changed.size() - watch.size() - 1, watch.size() + 1, "/" + watch) == 0) {
-    return true;
+// Glob match a changed path against a claim's watch pattern.
+//   - no slash in pattern: match the file name (e.g. "*.json")
+//   - "**" in pattern: '*' crosses '/' (e.g. "docs/**")
+//   - otherwise: path glob where '*' stays within one segment
+bool watch_matches(const std::string& pattern, const std::string& path) {
+  if (pattern == path) return true;
+  if (pattern.find('/') == std::string::npos) {
+    return fnmatch(pattern.c_str(), fs::path(path).filename().string().c_str(), 0) == 0;
   }
-  return fs::path(changed).filename() == watch;
+  if (pattern.find("**") != std::string::npos) {
+    std::string collapsed = pattern;
+    for (size_t p; (p = collapsed.find("**")) != std::string::npos;) collapsed.replace(p, 2, "*");
+    return fnmatch(collapsed.c_str(), path.c_str(), 0) == 0;
+  }
+  return fnmatch(pattern.c_str(), path.c_str(), FNM_PATHNAME) == 0;
 }
 
-// Normalize a git URL for comparison: lowercase, drop a trailing ".git" and "/".
 std::string normalize_url(std::string u) {
   std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c) { return std::tolower(c); });
   if (u.size() >= 4 && u.compare(u.size() - 4, 4, ".git") == 0) u.erase(u.size() - 4);
@@ -57,6 +69,25 @@ rctx::RepoEntry self_register(const std::string& repo_path) {
   e.default_branch = rctx::default_branch_ref(repo_path);
   rctx::register_repo(e);
   return e;
+}
+
+// Write a hook that refreshes rctx registration. Skips a pre-existing hook that
+// rctx did not write, so we never clobber a user's own hook.
+std::string install_hook(const fs::path& dir, const std::string& name) {
+  const fs::path file = dir / name;
+  if (fs::exists(file)) {
+    std::ifstream in(file);
+    std::string content((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+    if (content.find("rctx-managed") == std::string::npos) return "skipped (existing hook)";
+  }
+  std::ofstream out(file, std::ios::trunc);
+  out << "#!/bin/sh\n# rctx-managed\nrctx register >/dev/null 2>&1 || true\n";
+  out.close();
+  fs::permissions(file,
+                  fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec |
+                      fs::perms::others_read | fs::perms::others_exec,
+                  fs::perm_options::replace);
+  return "installed";
 }
 
 struct GitRuntime {
@@ -102,8 +133,13 @@ int main(int argc, char** argv) {
 
   app.add_subcommand("repos", "list registered repos");
 
-  auto* impact = app.add_subcommand("impact", "claims in other repos that declare impact on this one");
+  bool outbound = false;
+  auto* impact = app.add_subcommand("impact", "cross-repo impact for this repo");
   impact->add_option("--repo", repo_path, "repository path")->capture_default_str();
+  impact->add_flag("--outbound", outbound, "claims in THIS repo that impact others");
+
+  auto* hook = app.add_subcommand("hook", "install git hooks that refresh registration");
+  hook->add_option("--repo", repo_path, "repository path")->capture_default_str();
 
   CLI11_PARSE(app, argc, argv);
 
@@ -152,12 +188,13 @@ int main(int argc, char** argv) {
     std::cout << out.dump(2) << std::endl;
   } else if (*reg) {
     const auto e = self_register(repo_path);
-    nlohmann::json out{{"url", e.url},
-                       {"path", e.path},
-                       {"branch", e.branch},
-                       {"default_branch", e.default_branch}};
     std::cerr << "registered " << e.path << std::endl;
-    std::cout << out.dump(2) << std::endl;
+    std::cout << nlohmann::json{{"url", e.url},
+                                {"path", e.path},
+                                {"branch", e.branch},
+                                {"default_branch", e.default_branch}}
+                     .dump(2)
+              << std::endl;
   } else if (*app.get_subcommand("repos")) {
     nlohmann::json out = nlohmann::json::array();
     for (const auto& r : rctx::list_repos()) {
@@ -168,15 +205,32 @@ int main(int argc, char** argv) {
     }
     std::cout << out.dump(2) << std::endl;
   } else if (*impact) {
-    const auto me = self_register(repo_path);  // ensure this repo is known
+    const auto me = self_register(repo_path);
     const std::string my_url = normalize_url(me.url);
-
     nlohmann::json out = nlohmann::json::array();
-    if (my_url.empty()) {
+
+    if (outbound) {
+      // Which repos are cloned here (by normalized URL that resolves to a path).
+      std::vector<std::string> cloned;
+      for (const auto& r : rctx::list_repos()) {
+        if (fs::exists(r.path)) cloned.push_back(normalize_url(r.url));
+      }
+      const fs::path my_claims = fs::path{repo_path} / ".rctx" / "claims";
+      for (const auto& c : rctx::load_claims(my_claims)) {
+        for (const auto& imp : c.impacts) {
+          const bool is_cloned =
+              std::find(cloned.begin(), cloned.end(), normalize_url(imp.url)) != cloned.end();
+          out.push_back({{"claim", c.id},
+                         {"impacts", imp.url},
+                         {"terms", imp.terms},
+                         {"target_cloned", is_cloned}});
+        }
+      }
+    } else if (my_url.empty()) {
       std::cerr << "warning: this repo has no origin URL; cross-repo impact needs one" << std::endl;
     } else {
       for (const auto& r : rctx::list_repos()) {
-        if (r.path == me.path) continue;              // skip self
+        if (r.path == me.path) continue;
         if (!fs::exists(r.path)) {
           out.push_back({{"note", "referenced repo not cloned on host"}, {"repo", r.url}});
           continue;
@@ -196,6 +250,18 @@ int main(int argc, char** argv) {
           }
         }
       }
+    }
+    std::cout << out.dump(2) << std::endl;
+  } else if (*hook) {
+    const std::string dir = rctx::hooks_dir(repo_path);
+    if (dir.empty()) {
+      std::cerr << "error: not a git repository: " << repo_path << std::endl;
+      return 1;
+    }
+    fs::create_directories(dir);
+    nlohmann::json out;
+    for (const char* name : {"post-checkout", "post-merge", "post-commit"}) {
+      out[name] = install_hook(dir, name);
     }
     std::cout << out.dump(2) << std::endl;
   }
