@@ -44,6 +44,25 @@ std::string trim(const std::string& s) {
   return s.substr(b, e - b + 1);
 }
 
+// Render `s` as a YAML double-quoted scalar so template values containing
+// metacharacters (`*` reads as an alias, `#`/`:`/`[`/`]` etc. can change how
+// the line parses) always round-trip as the literal string the caller gave.
+std::string yaml_quote(const std::string& s) {
+  std::string out = "\"";
+  for (char c : s) {
+    switch (c) {
+      case '\\': out += "\\\\"; break;
+      case '"': out += "\\\""; break;
+      case '\n': out += "\\n"; break;
+      case '\t': out += "\\t"; break;
+      case '\r': out += "\\r"; break;
+      default: out += c;
+    }
+  }
+  out += '"';
+  return out;
+}
+
 std::string replace_all(std::string s, const std::string& from, const std::string& to) {
   for (size_t pos = 0; (pos = s.find(from, pos)) != std::string::npos; pos += to.size()) {
     s.replace(pos, from.size(), to);
@@ -74,13 +93,13 @@ std::string render_claim_template(const std::string& tmpl, const std::string& id
     watches_block = "watches: []";
   } else {
     watches_block = "watches:";
-    for (const auto& w : watches) watches_block += "\n  - " + w;
+    for (const auto& w : watches) watches_block += "\n  - " + yaml_quote(w);
   }
 
   std::string out = tmpl;
-  out = replace_all(out, "{{id}}", id);
-  out = replace_all(out, "{{scope}}", scope);
-  out = replace_all(out, "{{volatility}}", volatility);
+  out = replace_all(out, "{{id}}", yaml_quote(id));
+  out = replace_all(out, "{{scope}}", yaml_quote(scope));
+  out = replace_all(out, "{{volatility}}", yaml_quote(volatility));
   out = replace_all(out, "{{watches_block}}", watches_block);
   return out;
 }

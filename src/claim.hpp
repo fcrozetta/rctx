@@ -47,8 +47,10 @@ void to_json(nlohmann::json& j, const Claim& c);
 std::string default_claim_template();
 
 // Fill a claim template's `{{id}}`, `{{scope}}`, `{{volatility}}` and
-// `{{watches_block}}` placeholders. `{{watches_block}}` expands to a YAML
-// `watches:` list (or `watches: []` when `watches` is empty).
+// `{{watches_block}}` placeholders. Each value is rendered as a quoted YAML
+// string scalar so metacharacters (e.g. a `*.json` watch glob) can't change
+// how the line parses. `{{watches_block}}` expands to a YAML `watches:` list
+// (or `watches: []` when `watches` is empty).
 std::string render_claim_template(const std::string& tmpl, const std::string& id,
                                    const std::string& scope, const std::string& volatility,
                                    const std::vector<std::string>& watches);
