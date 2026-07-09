@@ -125,7 +125,10 @@ int main(int argc, char** argv) {
   newcmd->add_option("--scope", new_scope, "claim scope")->capture_default_str();
   newcmd->add_option("--volatility", new_volatility, "\"stable\" or \"volatile\"")
       ->capture_default_str();
-  newcmd->add_option("--watch", new_watches, "watched path (repeatable)");
+  // allow_extra_args(false): each --watch takes exactly one value, so a
+  // positional id following a --watch is not swallowed into the watch list.
+  newcmd->add_option("--watch", new_watches, "watched path (repeatable)")
+      ->allow_extra_args(false);
   newcmd->add_option("--template", template_path,
                       "path to a claim template file (defaults to the built-in template)");
   newcmd->add_flag("--force", force, "overwrite the claim file if it already exists");

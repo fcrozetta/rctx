@@ -63,13 +63,6 @@ std::string yaml_quote(const std::string& s) {
   return out;
 }
 
-std::string replace_all(std::string s, const std::string& from, const std::string& to) {
-  for (size_t pos = 0; (pos = s.find(from, pos)) != std::string::npos; pos += to.size()) {
-    s.replace(pos, from.size(), to);
-  }
-  return s;
-}
-
 }  // namespace
 
 std::string default_claim_template() {
@@ -96,11 +89,33 @@ std::string render_claim_template(const std::string& tmpl, const std::string& id
     for (const auto& w : watches) watches_block += "\n  - " + yaml_quote(w);
   }
 
-  std::string out = tmpl;
-  out = replace_all(out, "{{id}}", yaml_quote(id));
-  out = replace_all(out, "{{scope}}", yaml_quote(scope));
-  out = replace_all(out, "{{volatility}}", yaml_quote(volatility));
-  out = replace_all(out, "{{watches_block}}", watches_block);
+  const std::vector<std::pair<std::string, std::string>> vars = {
+      {"{{id}}", yaml_quote(id)},
+      {"{{scope}}", yaml_quote(scope)},
+      {"{{volatility}}", yaml_quote(volatility)},
+      {"{{watches_block}}", watches_block},
+  };
+
+  // Single pass: each placeholder is expanded exactly once and the substituted
+  // value is never rescanned, so a value that happens to contain "{{scope}}"
+  // (or any other placeholder text) is emitted literally rather than being
+  // re-substituted. Unknown "{{...}}" runs are copied through untouched.
+  std::string out;
+  out.reserve(tmpl.size());
+  for (size_t i = 0; i < tmpl.size();) {
+    bool matched = false;
+    if (tmpl[i] == '{') {
+      for (const auto& [key, value] : vars) {
+        if (tmpl.compare(i, key.size(), key) == 0) {
+          out += value;
+          i += key.size();
+          matched = true;
+          break;
+        }
+      }
+    }
+    if (!matched) out += tmpl[i++];
+  }
   return out;
 }
 
