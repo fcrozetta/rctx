@@ -17,6 +17,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <system_error>
 
 #include <fnmatch.h>
 
@@ -212,10 +213,21 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    fs::create_directories(out_path.parent_path());
+    std::error_code ec;
+    fs::create_directories(out_path.parent_path(), ec);
+    if (ec) {
+      std::cerr << "error: could not create " << out_path.parent_path().string() << ": "
+                << ec.message() << std::endl;
+      return 1;
+    }
+
     std::ofstream out(out_path, std::ios::trunc);
     out << rendered;
     out.close();
+    if (!out) {
+      std::cerr << "error: could not write claim: " << out_path.string() << std::endl;
+      return 1;
+    }
 
     std::cerr << "created " << out_path.string() << std::endl;
     nlohmann::json j;
