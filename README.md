@@ -1,23 +1,11 @@
 # rctx — Repo ConTeXt
 
-A local CLI that keeps a repo's living assumptions — the stuff usually
-scattered across Slack, stale comments, and someone's memory — as committed,
-searchable **claims** that coding agents and humans can both query.
+A local CLI for repo-scoped **claims**: assumptions about a repo (build
+requirements, API contracts, cross-repo impact) recorded as Markdown files,
+indexed for full-text search, and checked for drift as the code changes.
 
-No server, no daemon, no account. Claims are just Markdown files in your repo.
-
-## The problem
-
-You (or your agent) know things about a repo that aren't in the code:
-
-- "This build breaks if `.env` is missing a key."
-- "This API contract is consumed by another repo — don't change it lightly."
-- "This module is volatile, re-check it after touching `src/parser/`."
-
-That knowledge usually lives in your head, a wiki page nobody opens, or a
-`.agents/claims/` hack that doesn't travel with the PR. rctx gives it a home:
-a plain file, checked into git, indexed for full-text search, and checked for
-drift automatically.
+No server, no daemon, no account. Claims are plain Markdown files committed
+to the repo.
 
 ## How it works
 
