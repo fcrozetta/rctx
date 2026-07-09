@@ -5,7 +5,7 @@
 .LSOverride
 
 # Icon must end with two \r
-Icon
+Icon
 
 # Thumbnails
 ._*
@@ -605,5 +605,9 @@ msbuild.wrn
 
 # Visual Studio 2015
 .vs/
+
+# ---> rctx / vcpkg
+vcpkg_installed/
+.rctx/cache/
 
 
