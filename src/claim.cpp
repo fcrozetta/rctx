@@ -46,18 +46,13 @@ std::string trim(const std::string& s) {
 
 }  // namespace
 
-std::optional<Claim> parse_claim_file(const fs::path& file) {
-  std::ifstream f(file);
-  if (!f) return std::nullopt;
-  std::stringstream buf;
-  buf << f.rdbuf();
-
+std::optional<Claim> parse_claim_text(const std::string& text, const std::string& source_label) {
   std::string fm_text, body;
-  if (!split_frontmatter(buf.str(), fm_text, body)) return std::nullopt;
+  if (!split_frontmatter(text, fm_text, body)) return std::nullopt;
 
   YAML::Node fm = YAML::Load(fm_text);
   Claim c;
-  c.source_path = file.string();
+  c.source_path = source_label;
   c.body = trim(body);
   if (fm["id"]) c.id = fm["id"].as<std::string>();
   if (fm["scope"]) c.scope = fm["scope"].as<std::string>();
@@ -78,6 +73,14 @@ std::optional<Claim> parse_claim_file(const fs::path& file) {
     }
   }
   return c;
+}
+
+std::optional<Claim> parse_claim_file(const fs::path& file) {
+  std::ifstream f(file);
+  if (!f) return std::nullopt;
+  std::stringstream buf;
+  buf << f.rdbuf();
+  return parse_claim_text(buf.str(), file.string());
 }
 
 std::vector<Claim> load_claims(const fs::path& claims_dir) {

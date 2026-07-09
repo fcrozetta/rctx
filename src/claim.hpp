@@ -30,6 +30,11 @@ struct Claim {
   std::string source_path;         // file the claim was loaded from
 };
 
+// Parse claim text (Markdown + frontmatter). Returns nullopt if no frontmatter.
+// `source_label` is recorded as the claim's source_path (a file path or a
+// "<repo>@<ref>:<path>" label for claims read out of a git tree).
+std::optional<Claim> parse_claim_text(const std::string& text, const std::string& source_label);
+
 // Parse a single claim file. Returns nullopt if the file has no frontmatter.
 std::optional<Claim> parse_claim_file(const std::filesystem::path& file);
 
