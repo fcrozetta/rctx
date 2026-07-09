@@ -28,6 +28,7 @@
 #include "git.hpp"
 #include "index.hpp"
 #include "registry.hpp"
+#include "uuid.hpp"
 
 #ifndef RCTX_VERSION
 #define RCTX_VERSION "0.0.0-dev"
@@ -117,8 +118,9 @@ int main(int argc, char** argv) {
   std::vector<std::string> new_watches;
   bool force = false;
   auto* newcmd = app.add_subcommand("new", "create a new claim from a template");
-  newcmd->add_option("id", new_id, "claim id, used as the file name under the claims dir")
-      ->required();
+  newcmd->add_option("id", new_id,
+                      "claim id, used as the file name under the claims dir "
+                      "(defaults to a new time-ordered UUID, newest first)");
   newcmd->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
   newcmd->add_option("--scope", new_scope, "claim scope")->capture_default_str();
   newcmd->add_option("--volatility", new_volatility, "\"stable\" or \"volatile\"")
@@ -167,8 +169,8 @@ int main(int argc, char** argv) {
   GitRuntime git_runtime;
 
   if (*newcmd) {
-    if (new_id.empty() || new_id.find("..") != std::string::npos ||
-        fs::path(new_id).is_absolute()) {
+    if (new_id.empty()) new_id = rctx::new_sortable_uuid();
+    if (new_id.find("..") != std::string::npos || fs::path(new_id).is_absolute()) {
       std::cerr << "error: invalid claim id: " << new_id << std::endl;
       return 1;
     }

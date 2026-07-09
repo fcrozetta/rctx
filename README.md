@@ -80,7 +80,7 @@ finds.
 
 | Command | What it does |
 |---|---|
-| `rctx new <id>` | Create a new claim file from a template |
+| `rctx new [id]` | Create a new claim file from a template (id defaults to a generated UUID) |
 | `rctx list` | Print every claim as JSON |
 | `rctx index` | Rebuild the local search index from claim files |
 | `rctx query "<expr>"` | Full-text search claims |
@@ -95,7 +95,7 @@ Run `rctx <command> --help` for the full flag list.
 
 ## Writing a claim
 
-`rctx new <id>` scaffolds a claim file for you:
+`rctx new [id]` scaffolds a claim file for you:
 
 ```bash
 rctx new api-openapi-contract --scope api --volatility volatile --watch openapi.json
@@ -105,6 +105,15 @@ This writes `.rctx/claims/api-openapi-contract.md` with the frontmatter filled
 in and a `TODO` body to replace. Pass `--template <file>` to render from your
 own template instead of the built-in one; `--force` overwrites an existing
 claim file.
+
+Omit `id` and rctx generates one: a UUID whose timestamp bits are stored
+inverted, so plain alphabetical order (`ls .rctx/claims`, `rctx list`) reads
+newest-to-oldest with no extra sort step.
+
+```bash
+rctx new --scope build --watch .env.example
+# -> created .rctx/claims/fe60b818-ff35-89b5-a06a-ba70c78309bd.md
+```
 
 A claim is Markdown with YAML frontmatter:
 

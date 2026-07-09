@@ -17,6 +17,7 @@ add_executable(rctx
   src/index.cpp
   src/git.cpp
   src/registry.cpp
+  src/uuid.cpp
 )
 
 target_link_libraries(rctx PRIVATE
