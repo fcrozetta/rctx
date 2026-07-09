@@ -52,20 +52,8 @@ rctx register
 rctx hook
 
 # Write your first claim
-mkdir -p .rctx/claims
-cat > .rctx/claims/build-env.md <<'EOF'
----
-id: build-requires-env
-scope: build
-volatility: stable
-watches:
-  - .env.example
-reverify: "test -f .env.example"
----
-
-The build assumes `.env.example` documents the required environment
-variables. If a new key appears, update the local `.env` before running.
-EOF
+rctx new build-requires-env --scope build --watch .env.example
+$EDITOR .rctx/claims/build-requires-env.md   # fill in `reverify` and the body
 
 # Index and search
 rctx index
@@ -92,6 +80,7 @@ finds.
 
 | Command | What it does |
 |---|---|
+| `rctx new <id>` | Create a new claim file from a template |
 | `rctx list` | Print every claim as JSON |
 | `rctx index` | Rebuild the local search index from claim files |
 | `rctx query "<expr>"` | Full-text search claims |
@@ -105,6 +94,17 @@ finds.
 Run `rctx <command> --help` for the full flag list.
 
 ## Writing a claim
+
+`rctx new <id>` scaffolds a claim file for you:
+
+```bash
+rctx new api-openapi-contract --scope api --volatility volatile --watch openapi.json
+```
+
+This writes `.rctx/claims/api-openapi-contract.md` with the frontmatter filled
+in and a `TODO` body to replace. Pass `--template <file>` to render from your
+own template instead of the built-in one; `--force` overwrites an existing
+claim file.
 
 A claim is Markdown with YAML frontmatter:
 

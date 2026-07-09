@@ -43,4 +43,14 @@ std::vector<Claim> load_claims(const std::filesystem::path& claims_dir);
 
 void to_json(nlohmann::json& j, const Claim& c);
 
+// The built-in template used by `rctx new` when no `--template` is given.
+std::string default_claim_template();
+
+// Fill a claim template's `{{id}}`, `{{scope}}`, `{{volatility}}` and
+// `{{watches_block}}` placeholders. `{{watches_block}}` expands to a YAML
+// `watches:` list (or `watches: []` when `watches` is empty).
+std::string render_claim_template(const std::string& tmpl, const std::string& id,
+                                   const std::string& scope, const std::string& volatility,
+                                   const std::vector<std::string>& watches);
+
 }  // namespace rctx

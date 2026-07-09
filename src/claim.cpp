@@ -44,7 +44,46 @@ std::string trim(const std::string& s) {
   return s.substr(b, e - b + 1);
 }
 
+std::string replace_all(std::string s, const std::string& from, const std::string& to) {
+  for (size_t pos = 0; (pos = s.find(from, pos)) != std::string::npos; pos += to.size()) {
+    s.replace(pos, from.size(), to);
+  }
+  return s;
+}
+
 }  // namespace
+
+std::string default_claim_template() {
+  return
+      "---\n"
+      "id: {{id}}\n"
+      "scope: {{scope}}\n"
+      "volatility: {{volatility}}\n"
+      "{{watches_block}}\n"
+      "reverify: \"\"\n"
+      "---\n"
+      "\n"
+      "TODO: describe the assumption this claim records.\n";
+}
+
+std::string render_claim_template(const std::string& tmpl, const std::string& id,
+                                   const std::string& scope, const std::string& volatility,
+                                   const std::vector<std::string>& watches) {
+  std::string watches_block;
+  if (watches.empty()) {
+    watches_block = "watches: []";
+  } else {
+    watches_block = "watches:";
+    for (const auto& w : watches) watches_block += "\n  - " + w;
+  }
+
+  std::string out = tmpl;
+  out = replace_all(out, "{{id}}", id);
+  out = replace_all(out, "{{scope}}", scope);
+  out = replace_all(out, "{{volatility}}", volatility);
+  out = replace_all(out, "{{watches_block}}", watches_block);
+  return out;
+}
 
 std::optional<Claim> parse_claim_text(const std::string& text, const std::string& source_label) {
   std::string fm_text, body;
