@@ -1,10 +1,14 @@
-// rctx PoC - repo context CLI (vertical slice).
-//   list   - walk .rctx/claims/** and emit parsed claims as JSON  (M1)
-//   index  - build the derived FTS index from claims               (M2)
-//   query  - full-text search the index                            (M2)
-//   status - current branch + files changed vs a base ref          (M3)
-//   drift  - claims whose watched paths changed vs the base ref     (M4)
+// rctx PoC - repo context CLI.
+//   list     - walk .rctx/claims/** and emit parsed claims as JSON
+//   index    - build the derived FTS index from claims
+//   query    - full-text search the index
+//   status   - current branch + files changed vs a base ref
+//   drift    - claims whose watched paths changed vs the base ref
+//   register - record this repo in the host-global registry
+//   repos    - list registered repos
+//   impact   - claims in OTHER registered repos that declare impact on this one
 
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <string>
@@ -16,21 +20,45 @@
 #include "claim.hpp"
 #include "git.hpp"
 #include "index.hpp"
+#include "registry.hpp"
+
+namespace fs = std::filesystem;
 
 namespace {
 
-// Naive path match for the PoC: exact, suffix-after-slash, or basename equality.
-// Real globbing is a later concern; this is enough to prove the drift wiring.
 bool watch_matches(const std::string& watch, const std::string& changed) {
   if (watch == changed) return true;
   if (changed.size() > watch.size() &&
       changed.compare(changed.size() - watch.size() - 1, watch.size() + 1, "/" + watch) == 0) {
     return true;
   }
-  return std::filesystem::path(changed).filename() == watch;
+  return fs::path(changed).filename() == watch;
 }
 
-// libgit2 needs global init/shutdown around any use.
+// Normalize a git URL for comparison: lowercase, drop a trailing ".git" and "/".
+std::string normalize_url(std::string u) {
+  std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c) { return std::tolower(c); });
+  if (u.size() >= 4 && u.compare(u.size() - 4, 4, ".git") == 0) u.erase(u.size() - 4);
+  if (!u.empty() && u.back() == '/') u.pop_back();
+  return u;
+}
+
+std::string canonical_path(const std::string& p) {
+  std::error_code ec;
+  fs::path c = fs::weakly_canonical(p, ec);
+  return ec ? fs::absolute(p).string() : c.string();
+}
+
+rctx::RepoEntry self_register(const std::string& repo_path) {
+  rctx::RepoEntry e;
+  e.path = canonical_path(repo_path);
+  e.url = rctx::remote_url(repo_path);
+  e.branch = rctx::current_branch(repo_path);
+  e.default_branch = rctx::default_branch_ref(repo_path);
+  rctx::register_repo(e);
+  return e;
+}
+
 struct GitRuntime {
   GitRuntime() { git_libgit2_init(); }
   ~GitRuntime() { git_libgit2_shutdown(); }
@@ -68,6 +96,14 @@ int main(int argc, char** argv) {
   drift->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
   drift->add_option("--repo", repo_path, "repository path")->capture_default_str();
   drift->add_option("--base", base_ref, "base ref to compare against")->capture_default_str();
+
+  auto* reg = app.add_subcommand("register", "record this repo in the host-global registry");
+  reg->add_option("--repo", repo_path, "repository path")->capture_default_str();
+
+  app.add_subcommand("repos", "list registered repos");
+
+  auto* impact = app.add_subcommand("impact", "claims in other repos that declare impact on this one");
+  impact->add_option("--repo", repo_path, "repository path")->capture_default_str();
 
   CLI11_PARSE(app, argc, argv);
 
@@ -109,6 +145,54 @@ int main(int argc, char** argv) {
                            {"changed_file", f},
                            {"base", base_ref},
                            {"reverify", c.reverify}});
+          }
+        }
+      }
+    }
+    std::cout << out.dump(2) << std::endl;
+  } else if (*reg) {
+    const auto e = self_register(repo_path);
+    nlohmann::json out{{"url", e.url},
+                       {"path", e.path},
+                       {"branch", e.branch},
+                       {"default_branch", e.default_branch}};
+    std::cerr << "registered " << e.path << std::endl;
+    std::cout << out.dump(2) << std::endl;
+  } else if (*app.get_subcommand("repos")) {
+    nlohmann::json out = nlohmann::json::array();
+    for (const auto& r : rctx::list_repos()) {
+      out.push_back({{"url", r.url},
+                     {"path", r.path},
+                     {"branch", r.branch},
+                     {"default_branch", r.default_branch}});
+    }
+    std::cout << out.dump(2) << std::endl;
+  } else if (*impact) {
+    const auto me = self_register(repo_path);  // ensure this repo is known
+    const std::string my_url = normalize_url(me.url);
+
+    nlohmann::json out = nlohmann::json::array();
+    if (my_url.empty()) {
+      std::cerr << "warning: this repo has no origin URL; cross-repo impact needs one" << std::endl;
+    } else {
+      for (const auto& r : rctx::list_repos()) {
+        if (r.path == me.path) continue;              // skip self
+        if (!fs::exists(r.path)) {
+          out.push_back({{"note", "referenced repo not cloned on host"}, {"repo", r.url}});
+          continue;
+        }
+        for (const auto& [rel, content] :
+             rctx::read_files_at_ref(r.path, r.default_branch, ".rctx/claims")) {
+          auto claim = rctx::parse_claim_text(content, r.url + "@" + r.default_branch + ":" + rel);
+          if (!claim) continue;
+          for (const auto& imp : claim->impacts) {
+            if (normalize_url(imp.url) == my_url) {
+              out.push_back({{"from_repo", r.url},
+                             {"from_ref", r.default_branch},
+                             {"claim", claim->id},
+                             {"source", claim->source_path},
+                             {"terms", imp.terms}});
+            }
           }
         }
       }
