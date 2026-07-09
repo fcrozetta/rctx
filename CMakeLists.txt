@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.25)
-project(rctx VERSION 0.0.1 LANGUAGES CXX)
+project(rctx VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,3 +26,8 @@ target_link_libraries(rctx PRIVATE
   CLI11::CLI11
   nlohmann_json::nlohmann_json
 )
+
+# Version string baked into the binary. Defaults to the project version;
+# CI overrides it with the release tag (-DRCTX_VERSION=<tag>).
+set(RCTX_VERSION "${PROJECT_VERSION}" CACHE STRING "rctx version string")
+target_compile_definitions(rctx PRIVATE RCTX_VERSION="${RCTX_VERSION}")

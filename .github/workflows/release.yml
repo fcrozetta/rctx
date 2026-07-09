@@ -1,0 +1,173 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate tag is semver and on main
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag must be semver without a v prefix (e.g. 1.2.3)." >&2
+            exit 1
+          fi
+          git fetch origin main
+          if ! git branch -r --contains "${GITHUB_SHA}" | grep -q "origin/main"; then
+            echo "Tag commit must be on main." >&2
+            exit 1
+          fi
+
+      - name: Install vcpkg
+        run: |
+          set -euo pipefail
+          VCPKG_ROOT="${RUNNER_TEMP}/vcpkg"
+          VCPKG_COMMIT="$(awk -F'"' '/builtin-baseline/ { print $4 }' vcpkg.json)"
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "${VCPKG_ROOT}"
+          git -C "${VCPKG_ROOT}" fetch --depth 1 origin "${VCPKG_COMMIT}"
+          git -C "${VCPKG_ROOT}" checkout "${VCPKG_COMMIT}"
+          "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=${VCPKG_ROOT}" >> "${GITHUB_ENV}"
+
+      - name: Build (Release)
+        run: |
+          cmake -S . -B build/Release \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
+            -DRCTX_VERSION="${GITHUB_REF_NAME}"
+          cmake --build build/Release --config Release
+
+      - name: Verify embedded version and smoke
+        run: |
+          set -euo pipefail
+          ACTUAL="$(./build/Release/rctx --version)"
+          if [[ "${ACTUAL}" != "${GITHUB_REF_NAME}" ]]; then
+            echo "Embedded version mismatch: expected '${GITHUB_REF_NAME}', got '${ACTUAL}'." >&2
+            exit 1
+          fi
+          ./build/Release/rctx list >/dev/null
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          ARCH="$(uname -m)"
+          PKG="rctx-${VERSION}-darwin-${ARCH}"
+          mkdir -p "dist/${PKG}"
+          cp build/Release/rctx README.md LICENSE "dist/${PKG}/"
+          tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
+          shasum -a 256 "dist/${PKG}.tar.gz" > "dist/${PKG}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rctx-macos
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+
+  build-linux:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            arch: amd64
+            triplet: x64-linux
+          - runner: ubuntu-24.04-arm
+            arch: arm64
+            triplet: arm64-linux
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config
+
+      - name: Install vcpkg
+        run: |
+          set -euo pipefail
+          VCPKG_ROOT="${RUNNER_TEMP}/vcpkg"
+          VCPKG_COMMIT="$(awk -F'"' '/builtin-baseline/ { print $4 }' vcpkg.json)"
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "${VCPKG_ROOT}"
+          git -C "${VCPKG_ROOT}" fetch --depth 1 origin "${VCPKG_COMMIT}"
+          git -C "${VCPKG_ROOT}" checkout "${VCPKG_COMMIT}"
+          "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=${VCPKG_ROOT}" >> "${GITHUB_ENV}"
+
+      - name: Build (Release)
+        run: |
+          cmake -S . -B build/Release \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
+            -DVCPKG_TARGET_TRIPLET="${{ matrix.triplet }}" \
+            -DRCTX_VERSION="${GITHUB_REF_NAME}"
+          cmake --build build/Release --config Release
+
+      - name: Verify embedded version and smoke
+        run: |
+          set -euo pipefail
+          ACTUAL="$(./build/Release/rctx --version)"
+          if [[ "${ACTUAL}" != "${GITHUB_REF_NAME}" ]]; then
+            echo "Embedded version mismatch: expected '${GITHUB_REF_NAME}', got '${ACTUAL}'." >&2
+            exit 1
+          fi
+          ./build/Release/rctx list >/dev/null
+
+      - name: Package
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          PKG="rctx-${VERSION}-linux-${{ matrix.arch }}"
+          mkdir -p "dist/${PKG}"
+          cp build/Release/rctx README.md LICENSE "dist/${PKG}/"
+          tar -C dist -czf "dist/${PKG}.tar.gz" "${PKG}"
+          sha256sum "dist/${PKG}.tar.gz" > "dist/${PKG}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rctx-linux-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+
+  publish:
+    if: startsWith(github.ref_name, '0.')
+    runs-on: ubuntu-latest
+    needs:
+      - build-macos
+      - build-linux
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish GitHub Release (pre-1.0, unsigned)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          generate_release_notes: true
+          files: |
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
