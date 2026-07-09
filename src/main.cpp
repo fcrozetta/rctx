@@ -31,8 +31,10 @@
 #include "index.hpp"
 #include "registry.hpp"
 
+// Fallback for a raw compile with no -DRCTX_VERSION. Matches the CMake local
+// default: 0.0.0 means "local build, not a release".
 #ifndef RCTX_VERSION
-#define RCTX_VERSION "0.0.0-dev"
+#define RCTX_VERSION "0.0.0"
 #endif
 
 namespace fs = std::filesystem;
