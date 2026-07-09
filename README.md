@@ -7,20 +7,16 @@ indexed for full-text search, and checked for drift as the code changes.
 No server, no daemon, no account. Claims are plain Markdown files committed
 to the repo.
 
-## How it works
+## Contents
 
-1. You write a **claim** — a Markdown file with a small YAML frontmatter —
-   under `.rctx/claims/`.
-2. rctx indexes claims into a disposable local SQLite cache so you can search
-   them instantly.
-3. rctx watches the paths a claim cares about. If one changes without the
-   claim being touched, that's **drift** — rctx flags it instead of staying
-   silent.
-4. Claims can point at *other* repos on your machine, so a change here can
-   surface as impact over there.
-
-rctx never edits your code or your claims. It only reads, indexes, and
-reports — you or your agent decide what to do about what it finds.
+- [Install](#install)
+- [Quick start](#quick-start)
+- [What is rctx](#what-is-rctx)
+- [Everyday commands](#everyday-commands)
+- [Writing a claim](#writing-a-claim)
+- [Cross-repo awareness](#cross-repo-awareness)
+- [Status](#status)
+- [License](#license)
 
 ## Install
 
@@ -75,6 +71,22 @@ EOF
 rctx index
 rctx query "environment"
 ```
+
+## What is rctx
+
+A **claim** is a fact about your repo that isn't in the code: a build
+requirement, an API contract another repo depends on, a module that's
+volatile and worth re-checking after certain changes. rctx keeps these as
+Markdown files under `.rctx/claims/` so they're committed, reviewed in PRs,
+and searchable — instead of living in someone's head or a wiki page.
+
+Each claim can also declare **drift**: if a path it cares about changes, rctx
+flags it. And a claim can name another repo it **impacts**, so a change here
+can surface as relevant context over there.
+
+rctx is read-only with respect to your work: it indexes and reports, but
+never edits claims or code. You or your agent decide what to do with what it
+finds.
 
 ## Everyday commands
 
