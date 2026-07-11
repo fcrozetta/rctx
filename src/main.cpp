@@ -9,7 +9,8 @@
 //   repos    - list registered repos
 //   impact   - inbound: claims in other repos that impact this one
 //              (--outbound: claims in this repo that impact others)
-//   hook     - install git hooks that refresh registration
+//   setup    - first-time setup: register this repo and install git hooks
+//              (alias: hook)
 
 #include <algorithm>
 #include <filesystem>
@@ -165,8 +166,10 @@ int main(int argc, char** argv) {
   impact->add_option("--repo", repo_path, "repository path")->capture_default_str();
   impact->add_flag("--outbound", outbound, "claims in THIS repo that impact others");
 
-  auto* hook = app.add_subcommand("hook", "install git hooks that refresh registration");
-  hook->add_option("--repo", repo_path, "repository path")->capture_default_str();
+  auto* setup = app.add_subcommand(
+      "setup", "first-time setup: register this repo and install git hooks");
+  setup->alias("hook");
+  setup->add_option("--repo", repo_path, "repository path")->capture_default_str();
 
   CLI11_PARSE(app, argc, argv);
 
@@ -340,18 +343,29 @@ int main(int argc, char** argv) {
       }
     }
     std::cout << out.dump(2) << std::endl;
-  } else if (*hook) {
+  } else if (*setup) {
     const std::string dir = rctx::hooks_dir(repo_path);
     if (dir.empty()) {
       std::cerr << "error: not a git repository: " << repo_path << std::endl;
       return 1;
     }
+    // Register now so cross-repo queries see this repo immediately; the hooks
+    // below keep it fresh on every checkout/merge/commit.
+    const auto e = self_register(repo_path);
+    std::cerr << "registered " << e.path << std::endl;
     fs::create_directories(dir);
-    nlohmann::json out;
+    nlohmann::json hooks;
     for (const char* name : {"post-checkout", "post-merge", "post-commit"}) {
-      out[name] = install_hook(dir, name);
+      hooks[name] = install_hook(dir, name);
     }
-    std::cout << out.dump(2) << std::endl;
+    std::cout << nlohmann::json{{"registered",
+                                 {{"url", e.url},
+                                  {"path", e.path},
+                                  {"branch", e.branch},
+                                  {"default_branch", e.default_branch}}},
+                                {"hooks", hooks}}
+                     .dump(2)
+              << std::endl;
   }
 
   return 0;
