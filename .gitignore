@@ -608,6 +608,13 @@ msbuild.wrn
 
 # ---> rctx / vcpkg
 vcpkg_installed/
-# Note: the rctx FTS index is a cache and lives under ~/.cache/rctx, never in the repo.
+# The rctx FTS index is a cache and lives under ~/.cache/rctx, never in the repo.
+
+# Claims are committed source of truth. A claim's scope is its folder name, so a
+# scope like build/, bin/, out/ or obj/ would otherwise be swallowed by the C++
+# ignore rules above and silently never committed. Force the whole tree tracked.
+# (Must come after those rules so the negation wins.)
+!.rctx/claims/**/
+!.rctx/claims/**
 
 
