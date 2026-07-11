@@ -24,6 +24,10 @@ struct Db {
       sqlite3_close(handle);
       throw std::runtime_error("cannot open index db: " + msg);
     }
+    // A git hook and a lazy query-time rebuild can both write this per-repo
+    // cache at once. Wait for a contended lock instead of failing on
+    // SQLITE_BUSY (same reason the registry sets this).
+    sqlite3_busy_timeout(handle, 3000);
   }
   ~Db() { sqlite3_close(handle); }
   Db(const Db&) = delete;
@@ -100,6 +104,25 @@ fs::path default_index_path(const fs::path& repo_root) {
   const std::string key =
       sanitize(repo_root.filename().string()) + "-" + fnv1a_hex(repo_root.string());
   return cache_home() / "rctx" / key / "index.db";
+}
+
+bool index_stale(const fs::path& db_path, const fs::path& claims_dir) {
+  std::error_code ec;
+  if (!fs::exists(db_path, ec)) return true;
+  const auto db_time = fs::last_write_time(db_path, ec);
+  if (ec) return true;  // can't read the index's mtime: treat as stale, rebuild
+  if (!fs::exists(claims_dir, ec)) return false;  // no claims to be newer than it
+
+  // The claims-dir mtime bumps when a child is added or removed; each entry's
+  // mtime bumps on edit. Newer than the index anywhere means rebuild.
+  const auto dir_time = fs::last_write_time(claims_dir, ec);
+  if (!ec && dir_time > db_time) return true;
+  for (const auto& entry : fs::recursive_directory_iterator(claims_dir, ec)) {
+    std::error_code entry_ec;
+    const auto t = fs::last_write_time(entry.path(), entry_ec);
+    if (!entry_ec && t > db_time) return true;
+  }
+  return false;
 }
 
 void build_index(const fs::path& db_path, const std::vector<Claim>& claims) {

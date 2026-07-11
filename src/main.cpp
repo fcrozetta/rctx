@@ -94,7 +94,12 @@ std::string install_hook(const fs::path& dir, const std::string& name) {
     if (content.find("rctx-managed") == std::string::npos) return "skipped (existing hook)";
   }
   std::ofstream out(file, std::ios::trunc);
-  out << "#!/bin/sh\n# rctx-managed\nrctx register >/dev/null 2>&1 || true\n";
+  // Re-register (branch/path may have changed) and rebuild the index so search
+  // stays fresh after checkout/merge/commit. Both write only outside the repo
+  // (registry + ~/.cache), both best-effort so a git op never fails on rctx.
+  out << "#!/bin/sh\n# rctx-managed\n"
+         "rctx register >/dev/null 2>&1 || true\n"
+         "rctx index >/dev/null 2>&1 || true\n";
   out.close();
   fs::permissions(file,
                   fs::perms::owner_all | fs::perms::group_read | fs::perms::group_exec |
@@ -314,10 +319,20 @@ int main(int argc, char** argv) {
     rctx::build_index(db_path, claims);
     std::cerr << "indexed " << claims.size() << " claim(s) -> " << db_path << std::endl;
   } else if (*query) {
-    if (db_path.empty()) db_path = rctx::default_index_path(index_root()).string();
+    const bool db_defaulted = db_path.empty();
+    const fs::path root = index_root();
+    if (db_defaulted) db_path = rctx::default_index_path(root).string();
+    // Lazily refresh the default cache so a query is never stale even if no hook
+    // ran and the user never called `index` (ADR: lazy checks at invocation).
+    // An explicit --db is left untouched: the caller pointed at that index.
+    if (db_defaulted) {
+      const fs::path cdir = root / ".rctx" / "claims";
+      if (rctx::index_stale(db_path, cdir)) rctx::build_index(db_path, rctx::load_claims(cdir));
+    }
     nlohmann::json out = nlohmann::json::array();
-    // No DB yet means the repo has never been indexed; report empty rather than
-    // creating a stray empty cache file just to fail on the missing FTS table.
+    // With a default db it now always exists (just built above). A missing
+    // explicit --db means nothing to search, so report empty rather than
+    // creating a stray file that fails on the absent FTS table.
     if (fs::exists(db_path)) {
       for (const auto& h : rctx::search_index(db_path, query_expr)) {
         out.push_back({{"id", h.id}, {"source_path", h.source_path}, {"snippet", h.snippet}});
