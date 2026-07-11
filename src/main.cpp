@@ -128,7 +128,10 @@ std::string ensure_gitignore(const fs::path& repo_root) {
          "# out/, ...) can't be silently dropped. Must come after those rules.\n"
          "!.rctx/\n"
          "!.rctx/**/\n"
-         "!.rctx/**\n";
+         "!.rctx/**\n"
+         "# The FTS index is a cache under ~/.cache/rctx. Re-ignore its old in-repo\n"
+         "# location (last match wins) so a leftover DB can't be committed.\n"
+         ".rctx/cache/\n";
   return existed ? "added" : "created";
 }
 

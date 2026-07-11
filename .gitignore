@@ -618,5 +618,8 @@ vcpkg_installed/
 !.rctx/
 !.rctx/**/
 !.rctx/**
+# ...but the FTS index is a cache under ~/.cache/rctx; re-ignore the old in-repo
+# location (last match wins) so a leftover DB can't be committed.
+.rctx/cache/
 
 
