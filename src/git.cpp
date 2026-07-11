@@ -154,6 +154,8 @@ std::vector<std::pair<std::string, std::string>> read_files_at_ref(
   return out;
 }
 
+bool is_git_repo(const fs::path& repo_path) { return static_cast<bool>(open_repo(repo_path)); }
+
 std::string hooks_dir(const fs::path& repo_path) {
   Repo repo = open_repo(repo_path);
   if (!repo) return "";

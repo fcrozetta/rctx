@@ -24,4 +24,12 @@ void register_repo(const RepoEntry& entry);
 
 std::vector<RepoEntry> list_repos();
 
+// Remove the entry with this exact (canonical) path. Returns true if a row was
+// deleted, false if nothing matched (or no registry exists yet).
+bool forget_repo(const std::string& path);
+
+// Remove every entry whose path no longer exists on disk. Returns the paths
+// that were pruned.
+std::vector<std::string> prune_missing_repos();
+
 }  // namespace rctx

@@ -9,6 +9,10 @@
 
 namespace rctx {
 
+// True if `repo_path` is itself a git repository or worktree (does not search
+// parent directories), so callers can reject non-repo paths before registering.
+bool is_git_repo(const std::filesystem::path& repo_path);
+
 // Short name of the currently checked-out branch (empty if detached/unavailable).
 std::string current_branch(const std::filesystem::path& repo_path);
 

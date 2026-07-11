@@ -6,7 +6,8 @@
 //   status   - current branch + files changed vs a base ref
 //   drift    - claims whose watched paths changed vs the base ref
 //   register - record this repo in the host-global registry
-//   repos    - list registered repos
+//   forget   - remove this repo's entry from the registry
+//   repos    - list registered repos (--prune drops entries whose path is gone)
 //   impact   - inbound: claims in other repos that impact this one
 //              (--outbound: claims in this repo that impact others)
 //   setup    - first-time setup: register this repo and install git hooks
@@ -70,13 +71,16 @@ std::string canonical_path(const std::string& p) {
   return ec ? fs::absolute(p).string() : c.string();
 }
 
+// Gather this repo's identity and record it in the registry. Only a real git
+// work-tree is written, so callers like `impact` that self-register a path from
+// the command line can't leave a junk entry (empty url/branch) behind.
 rctx::RepoEntry self_register(const std::string& repo_path) {
   rctx::RepoEntry e;
   e.path = canonical_path(repo_path);
   e.url = rctx::remote_url(repo_path);
   e.branch = rctx::current_branch(repo_path);
   e.default_branch = rctx::default_branch_ref(repo_path);
-  rctx::register_repo(e);
+  if (rctx::is_git_repo(repo_path)) rctx::register_repo(e);
   return e;
 }
 
@@ -159,7 +163,12 @@ int main(int argc, char** argv) {
   auto* reg = app.add_subcommand("register", "record this repo in the host-global registry");
   reg->add_option("--repo", repo_path, "repository path")->capture_default_str();
 
-  app.add_subcommand("repos", "list registered repos");
+  auto* forget = app.add_subcommand("forget", "remove this repo's entry from the registry");
+  forget->add_option("--repo", repo_path, "repository path")->capture_default_str();
+
+  bool prune = false;
+  auto* repos = app.add_subcommand("repos", "list registered repos");
+  repos->add_flag("--prune", prune, "drop entries whose path no longer exists on disk");
 
   bool outbound = false;
   auto* impact = app.add_subcommand("impact", "cross-repo impact for this repo");
@@ -278,6 +287,10 @@ int main(int argc, char** argv) {
     }
     std::cout << out.dump(2) << std::endl;
   } else if (*reg) {
+    if (!rctx::is_git_repo(repo_path)) {
+      std::cerr << "error: not a git repository: " << repo_path << std::endl;
+      return 1;
+    }
     const auto e = self_register(repo_path);
     std::cerr << "registered " << e.path << std::endl;
     std::cout << nlohmann::json{{"url", e.url},
@@ -286,15 +299,26 @@ int main(int argc, char** argv) {
                                 {"default_branch", e.default_branch}}
                      .dump(2)
               << std::endl;
-  } else if (*app.get_subcommand("repos")) {
-    nlohmann::json out = nlohmann::json::array();
-    for (const auto& r : rctx::list_repos()) {
-      out.push_back({{"url", r.url},
-                     {"path", r.path},
-                     {"branch", r.branch},
-                     {"default_branch", r.default_branch}});
+  } else if (*forget) {
+    const std::string path = canonical_path(repo_path);
+    const bool removed = rctx::forget_repo(path);
+    std::cerr << (removed ? "forgot " : "no entry for ") << path << std::endl;
+    std::cout << nlohmann::json{{"path", path}, {"removed", removed}}.dump(2) << std::endl;
+  } else if (*repos) {
+    if (prune) {
+      nlohmann::json pruned = nlohmann::json::array();
+      for (const auto& p : rctx::prune_missing_repos()) pruned.push_back(p);
+      std::cout << nlohmann::json{{"pruned", pruned}}.dump(2) << std::endl;
+    } else {
+      nlohmann::json out = nlohmann::json::array();
+      for (const auto& r : rctx::list_repos()) {
+        out.push_back({{"url", r.url},
+                       {"path", r.path},
+                       {"branch", r.branch},
+                       {"default_branch", r.default_branch}});
+      }
+      std::cout << out.dump(2) << std::endl;
     }
-    std::cout << out.dump(2) << std::endl;
   } else if (*impact) {
     const auto me = self_register(repo_path);
     const std::string my_url = normalize_url(me.url);

@@ -87,7 +87,8 @@ finds.
 | `rctx drift` | Claims whose watched paths changed vs. a base ref |
 | `rctx setup` | First-time setup: register this repo and install git hooks (alias: `rctx hook`) |
 | `rctx register` | Record this repo in the host-wide registry (git hooks run this for you) |
-| `rctx repos` | List every rctx-registered repo on this machine |
+| `rctx forget` | Remove this repo's entry from the registry (`--repo` targets another path; for a directory that no longer exists, use `rctx repos --prune`) |
+| `rctx repos` | List every rctx-registered repo (`--prune` drops entries whose path is gone) |
 | `rctx impact` | Claims in *other* repos that impact this one (`--outbound` for the reverse) |
 
 Run `rctx <command> --help` for the full flag list.
