@@ -120,9 +120,13 @@ std::string ensure_gitignore(const fs::path& repo_root) {
   std::ofstream out(gi, std::ios::app);
   if (!out) return "error";
   if (!content.empty() && content.back() != '\n') out << '\n';
+  // `!.rctx/` must come first: if an earlier rule excludes .rctx/ itself, Git
+  // won't descend into it, so the child negations alone would never re-include
+  // anything. Re-include the dir, then its subdirs, then its files.
   out << "\n# rctx: .rctx/ is committed source of truth. Keep the whole tree\n"
          "# tracked so a claim scope folder matching an ignore rule (build/, bin/,\n"
          "# out/, ...) can't be silently dropped. Must come after those rules.\n"
+         "!.rctx/\n"
          "!.rctx/**/\n"
          "!.rctx/**\n";
   return existed ? "added" : "created";
@@ -182,7 +186,8 @@ int main(int argc, char** argv) {
       "index database path (default: a per-repo dir under $XDG_CACHE_HOME or ~/.cache; "
       "the index is a disposable cache and is never stored inside the repo)";
   auto* index = app.add_subcommand("index", "build the derived FTS index from claims");
-  index->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
+  auto* index_claims_opt =
+      index->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
   index->add_option("--db", db_path, db_help);
 
   std::string query_expr;
@@ -296,7 +301,12 @@ int main(int argc, char** argv) {
     }
     std::cout << out.dump(2) << std::endl;
   } else if (*index) {
-    if (db_path.empty()) db_path = rctx::default_index_path(index_root()).string();
+    const fs::path root = index_root();
+    if (db_path.empty()) db_path = rctx::default_index_path(root).string();
+    // Load claims from the same work-tree root the cache is keyed on. Otherwise
+    // `index` from a subdir loads an empty set (claims_dir is cwd-relative) and
+    // overwrites the shared root cache with nothing. An explicit -C still wins.
+    if (index_claims_opt->count() == 0) claims_dir = (root / ".rctx" / "claims").string();
     const auto claims = rctx::load_claims(claims_dir);
     rctx::build_index(db_path, claims);
     std::cerr << "indexed " << claims.size() << " claim(s) -> " << db_path << std::endl;

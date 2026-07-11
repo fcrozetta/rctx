@@ -614,6 +614,8 @@ vcpkg_installed/
 # A claim's scope is its folder name, so a scope like build/, bin/, out/ or obj/
 # would otherwise be swallowed by the ignore rules above and silently never
 # committed. Force the whole .rctx/ tree tracked — must come after those rules.
+# !.rctx/ comes first so this still works even if a rule excludes .rctx/ itself.
+!.rctx/
 !.rctx/**/
 !.rctx/**
 
