@@ -48,8 +48,7 @@ cmake --build --preset release
 cd your-repo
 
 # One-time: register this repo and install git hooks that keep it in sync
-rctx register
-rctx hook
+rctx setup
 
 # Write your first claim
 rctx new build-requires-env --scope build --watch .env.example
@@ -86,10 +85,10 @@ finds.
 | `rctx query "<expr>"` | Full-text search claims |
 | `rctx status` | Current branch + files changed vs. a base ref |
 | `rctx drift` | Claims whose watched paths changed vs. a base ref |
-| `rctx register` | Record this repo in the host-wide registry |
+| `rctx setup` | First-time setup: register this repo and install git hooks (alias: `rctx hook`) |
+| `rctx register` | Record this repo in the host-wide registry (git hooks run this for you) |
 | `rctx repos` | List every rctx-registered repo on this machine |
 | `rctx impact` | Claims in *other* repos that impact this one (`--outbound` for the reverse) |
-| `rctx hook` | Install git hooks that keep registration fresh |
 
 Run `rctx <command> --help` for the full flag list.
 
