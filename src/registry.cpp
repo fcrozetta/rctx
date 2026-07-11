@@ -19,6 +19,10 @@ struct Db {
       sqlite3_close(handle);
       throw std::runtime_error("cannot open registry db: " + msg);
     }
+    // rctx runs from git hooks and agent loops, so several processes may touch
+    // the registry at once. Wait for a contended write lock instead of failing
+    // the command outright with SQLITE_BUSY.
+    sqlite3_busy_timeout(handle, 3000);
   }
   ~Db() { sqlite3_close(handle); }
   Db(const Db&) = delete;
