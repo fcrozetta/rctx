@@ -126,3 +126,11 @@ Two refinements from the PoC, folded into decisions 1 and 2 above:
   each git worktree is isolated, under `$XDG_CACHE_HOME` (else `~/.cache/rctx`).
   The host-global registry stays at `$RCTX_HOME`: it is host state, not a
   throwaway cache, and has a different lifecycle.
+- `setup` manages `.gitignore`. Because a claim's scope is its folder name, a
+  scope matching a repo ignore rule (`build/`, `bin/`, ...) would be silently
+  untracked; `setup` appends a `!.rctx/**` negation so the committed-source-of-
+  truth invariant holds. This is a deliberate, narrow exception to decision 3's
+  advisory-only rule: the automatic read/report path (list/query/drift/impact)
+  still never mutates anything, but the explicit `setup` command may write repo
+  config — git hooks, and now `.gitignore` — and that write is visible in
+  `git status` for the user to review and commit.
