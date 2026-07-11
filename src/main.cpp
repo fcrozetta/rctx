@@ -71,13 +71,16 @@ std::string canonical_path(const std::string& p) {
   return ec ? fs::absolute(p).string() : c.string();
 }
 
+// Gather this repo's identity and record it in the registry. Only a real git
+// work-tree is written, so callers like `impact` that self-register a path from
+// the command line can't leave a junk entry (empty url/branch) behind.
 rctx::RepoEntry self_register(const std::string& repo_path) {
   rctx::RepoEntry e;
   e.path = canonical_path(repo_path);
   e.url = rctx::remote_url(repo_path);
   e.branch = rctx::current_branch(repo_path);
   e.default_branch = rctx::default_branch_ref(repo_path);
-  rctx::register_repo(e);
+  if (rctx::is_git_repo(repo_path)) rctx::register_repo(e);
   return e;
 }
 
