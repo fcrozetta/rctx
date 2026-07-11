@@ -111,4 +111,44 @@ std::vector<RepoEntry> list_repos() {
   return repos;
 }
 
+bool forget_repo(const std::string& path) {
+  const fs::path db_path = registry_path();
+  if (!fs::exists(db_path)) return false;
+
+  Db db(db_path);
+  ensure_schema(db.handle);
+  Stmt del(db.handle, "DELETE FROM repos WHERE path=?;");
+  bind_text(del.handle, 1, path);
+  if (sqlite3_step(del.handle) != SQLITE_DONE) {
+    throw std::runtime_error(std::string{"forget failed: "} + sqlite3_errmsg(db.handle));
+  }
+  return sqlite3_changes(db.handle) > 0;
+}
+
+std::vector<std::string> prune_missing_repos() {
+  std::vector<std::string> removed;
+  const fs::path db_path = registry_path();
+  if (!fs::exists(db_path)) return removed;
+
+  Db db(db_path);
+  ensure_schema(db.handle);
+
+  // Collect the dead paths first (statement finalized before we delete).
+  {
+    Stmt q(db.handle, "SELECT path FROM repos ORDER BY path;");
+    while (sqlite3_step(q.handle) == SQLITE_ROW) {
+      std::string p = column(q.handle, 0);
+      if (!fs::exists(fs::path{p})) removed.push_back(std::move(p));
+    }
+  }
+  for (const auto& p : removed) {
+    Stmt del(db.handle, "DELETE FROM repos WHERE path=?;");
+    bind_text(del.handle, 1, p);
+    if (sqlite3_step(del.handle) != SQLITE_DONE) {
+      throw std::runtime_error(std::string{"prune failed: "} + sqlite3_errmsg(db.handle));
+    }
+  }
+  return removed;
+}
+
 }  // namespace rctx
