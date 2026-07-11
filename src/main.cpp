@@ -103,6 +103,31 @@ std::string install_hook(const fs::path& dir, const std::string& name) {
   return "installed";
 }
 
+// Ensure the repo's .gitignore force-tracks the whole .rctx/ tree. .rctx/ is
+// committed source of truth (claim files); nothing disposable lives there — the
+// FTS index is a cache under ~/.cache/rctx. A claim's scope is its folder name,
+// so without this a scope matching a common ignore rule (build/, bin/, out/...)
+// would be silently dropped and never travel in a PR. Idempotent.
+std::string ensure_gitignore(const fs::path& repo_root) {
+  const fs::path gi = repo_root / ".gitignore";
+  const bool existed = fs::exists(gi);
+  std::string content;
+  if (existed) {
+    std::ifstream in(gi);
+    content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    if (content.find("!.rctx/**") != std::string::npos) return "present";
+  }
+  std::ofstream out(gi, std::ios::app);
+  if (!out) return "error";
+  if (!content.empty() && content.back() != '\n') out << '\n';
+  out << "\n# rctx: .rctx/ is committed source of truth. Keep the whole tree\n"
+         "# tracked so a claim scope folder matching an ignore rule (build/, bin/,\n"
+         "# out/, ...) can't be silently dropped. Must come after those rules.\n"
+         "!.rctx/**/\n"
+         "!.rctx/**\n";
+  return existed ? "added" : "created";
+}
+
 struct GitRuntime {
   GitRuntime() { git_libgit2_init(); }
   ~GitRuntime() { git_libgit2_shutdown(); }
@@ -409,12 +434,19 @@ int main(int argc, char** argv) {
     for (const char* name : {"post-checkout", "post-merge", "post-commit"}) {
       hooks[name] = install_hook(dir, name);
     }
+    // Keep .rctx/ committable no matter what the repo's ignore rules are.
+    const std::string root = rctx::repo_root(repo_path);
+    const std::string gitignore = ensure_gitignore(root.empty() ? fs::path{repo_path} : fs::path{root});
+    if (gitignore == "added" || gitignore == "created") {
+      std::cerr << "updated .gitignore to keep .rctx/ tracked — review and commit it" << std::endl;
+    }
     std::cout << nlohmann::json{{"registered",
                                  {{"url", e.url},
                                   {"path", e.path},
                                   {"branch", e.branch},
                                   {"default_branch", e.default_branch}}},
-                                {"hooks", hooks}}
+                                {"hooks", hooks},
+                                {"gitignore", gitignore}}
                      .dump(2)
               << std::endl;
   }

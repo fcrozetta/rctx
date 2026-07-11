@@ -90,7 +90,7 @@ finds.
 | `rctx query "<expr>"` | Full-text search claims |
 | `rctx status` | Current branch + files changed vs. a base ref |
 | `rctx drift` | Claims whose watched paths changed vs. a base ref |
-| `rctx setup` | First-time setup: register this repo and install git hooks (alias: `rctx hook`) |
+| `rctx setup` | First-time setup: register this repo, install git hooks, and add a `.gitignore` rule keeping `.rctx/` tracked (alias: `rctx hook`) |
 | `rctx register` | Record this repo in the host-wide registry (git hooks run this for you) |
 | `rctx forget` | Remove this repo's entry from the registry (`--repo` targets another path; for a directory that no longer exists, use `rctx repos --prune`) |
 | `rctx repos` | List every rctx-registered repo (`--prune` drops entries whose path is gone) |
