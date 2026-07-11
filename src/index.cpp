@@ -1,5 +1,9 @@
 #include "index.hpp"
 
+#include <cctype>
+#include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <stdexcept>
 #include <string>
 
@@ -60,7 +64,43 @@ void bind_text(sqlite3_stmt* s, int col, const std::string& v) {
   sqlite3_bind_text(s, col, v.c_str(), -1, SQLITE_TRANSIENT);
 }
 
+// 64-bit FNV-1a, hex-encoded. Deterministic across runs and platforms (unlike
+// std::hash), so it makes a stable per-repo cache-directory key.
+std::string fnv1a_hex(const std::string& s) {
+  uint64_t h = 1469598103934665603ULL;
+  for (unsigned char c : s) {
+    h ^= c;
+    h *= 1099511628211ULL;
+  }
+  char buf[17];
+  std::snprintf(buf, sizeof(buf), "%016llx", static_cast<unsigned long long>(h));
+  return std::string{buf};
+}
+
+// A filesystem-safe, human-recognizable form of the repo basename.
+std::string sanitize(const std::string& s) {
+  std::string out;
+  for (unsigned char c : s) {
+    out += (std::isalnum(c) || c == '.' || c == '_' || c == '-') ? static_cast<char>(c) : '-';
+  }
+  return out.empty() ? "repo" : out;
+}
+
+fs::path cache_home() {
+  if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return fs::path{x};
+  const char* h = std::getenv("HOME");
+  return fs::path{h ? h : "."} / ".cache";
+}
+
 }  // namespace
+
+fs::path default_index_path(const fs::path& repo_root) {
+  // basename keeps the dir eyeball-identifiable; the hash of the full path keeps
+  // it unique across same-named repos and distinct per worktree.
+  const std::string key =
+      sanitize(repo_root.filename().string()) + "-" + fnv1a_hex(repo_root.string());
+  return cache_home() / "rctx" / key / "index.db";
+}
 
 void build_index(const fs::path& db_path, const std::vector<Claim>& claims) {
   if (db_path.has_parent_path()) fs::create_directories(db_path.parent_path());

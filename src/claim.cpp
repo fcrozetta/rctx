@@ -68,8 +68,6 @@ std::string yaml_quote(const std::string& s) {
 std::string default_claim_template() {
   return
       "---\n"
-      "id: {{id}}\n"
-      "scope: {{scope}}\n"
       "volatility: {{volatility}}\n"
       "{{watches_block}}\n"
       "reverify: \"\"\n"
@@ -78,8 +76,7 @@ std::string default_claim_template() {
       "TODO: describe the assumption this claim records.\n";
 }
 
-std::string render_claim_template(const std::string& tmpl, const std::string& id,
-                                   const std::string& scope, const std::string& volatility,
+std::string render_claim_template(const std::string& tmpl, const std::string& volatility,
                                    const std::vector<std::string>& watches) {
   std::string watches_block;
   if (watches.empty()) {
@@ -90,8 +87,6 @@ std::string render_claim_template(const std::string& tmpl, const std::string& id
   }
 
   const std::vector<std::pair<std::string, std::string>> vars = {
-      {"{{id}}", yaml_quote(id)},
-      {"{{scope}}", yaml_quote(scope)},
       {"{{volatility}}", yaml_quote(volatility)},
       {"{{watches_block}}", watches_block},
   };
@@ -128,8 +123,8 @@ std::optional<Claim> parse_claim_text(const std::string& text, const std::string
     Claim c;
     c.source_path = source_label;
     c.body = trim(body);
-    if (fm["id"]) c.id = fm["id"].as<std::string>();
-    if (fm["scope"]) c.scope = fm["scope"].as<std::string>();
+    // id and scope are intentionally not read here: they are derived from the
+    // claim file's path by the caller (see derive_identity).
     if (fm["volatility"]) c.volatility = fm["volatility"].as<std::string>();
     if (fm["reverify"]) c.reverify = fm["reverify"].as<std::string>();
 
@@ -163,13 +158,30 @@ std::optional<Claim> parse_claim_file(const fs::path& file) {
   return parse_claim_text(buf.str(), file.string());
 }
 
+ClaimIdentity derive_identity(const fs::path& claims_relative_path) {
+  ClaimIdentity out;
+  fs::path noext = claims_relative_path;
+  noext.replace_extension();  // drop the trailing .md if present
+  out.id = noext.generic_string();
+  // scope is the top-level folder; empty for a claim directly under claims_dir.
+  if (claims_relative_path.has_parent_path()) {
+    out.scope = claims_relative_path.begin()->string();
+  }
+  return out;
+}
+
 std::vector<Claim> load_claims(const fs::path& claims_dir) {
   std::vector<Claim> claims;
   if (!fs::exists(claims_dir)) return claims;
   for (const auto& entry : fs::recursive_directory_iterator(claims_dir)) {
     if (!entry.is_regular_file()) continue;
     if (entry.path().extension() != ".md") continue;
-    if (auto c = parse_claim_file(entry.path())) claims.push_back(std::move(*c));
+    if (auto c = parse_claim_file(entry.path())) {
+      const auto ident = derive_identity(entry.path().lexically_relative(claims_dir));
+      c->scope = ident.scope;
+      c->id = ident.id;
+      claims.push_back(std::move(*c));
+    }
   }
   return claims;
 }

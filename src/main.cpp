@@ -103,10 +103,53 @@ std::string install_hook(const fs::path& dir, const std::string& name) {
   return "installed";
 }
 
+// Ensure the repo's .gitignore force-tracks the whole .rctx/ tree. .rctx/ is
+// committed source of truth (claim files); nothing disposable lives there — the
+// FTS index is a cache under ~/.cache/rctx. A claim's scope is its folder name,
+// so without this a scope matching a common ignore rule (build/, bin/, out/...)
+// would be silently dropped and never travel in a PR. Idempotent.
+std::string ensure_gitignore(const fs::path& repo_root) {
+  const fs::path gi = repo_root / ".gitignore";
+  const bool existed = fs::exists(gi);
+  std::string content;
+  if (existed) {
+    std::ifstream in(gi);
+    content.assign(std::istreambuf_iterator<char>(in), std::istreambuf_iterator<char>());
+    if (content.find("!.rctx/**") != std::string::npos) return "present";
+  }
+  std::ofstream out(gi, std::ios::app);
+  if (!out) return "error";
+  if (!content.empty() && content.back() != '\n') out << '\n';
+  // `!.rctx/` must come first: if an earlier rule excludes .rctx/ itself, Git
+  // won't descend into it, so the child negations alone would never re-include
+  // anything. Re-include the dir, then its subdirs, then its files.
+  out << "\n# rctx: .rctx/ is committed source of truth. Keep the whole tree\n"
+         "# tracked so a claim scope folder matching an ignore rule (build/, bin/,\n"
+         "# out/, ...) can't be silently dropped. Must come after those rules.\n"
+         "!.rctx/\n"
+         "!.rctx/**/\n"
+         "!.rctx/**\n"
+         "# The FTS index is a cache under ~/.cache/rctx. Re-ignore its old in-repo\n"
+         "# location (last match wins) so a leftover DB can't be committed.\n"
+         ".rctx/cache/\n";
+  return existed ? "added" : "created";
+}
+
 struct GitRuntime {
   GitRuntime() { git_libgit2_init(); }
   ~GitRuntime() { git_libgit2_shutdown(); }
 };
+
+// The repo a local index/query targets: the git work-tree root containing the
+// cwd (so it works from a subdir and keys per worktree), or the canonical cwd
+// when that is not a git work tree. Used to locate this repo's cache dir.
+fs::path index_root() {
+  const std::string root = rctx::repo_root(".");
+  if (!root.empty()) return fs::path{root};
+  std::error_code ec;
+  const fs::path cwd = fs::current_path(ec);
+  return ec ? fs::path{"."} : cwd;
+}
 
 }  // namespace
 
@@ -116,19 +159,19 @@ int main(int argc, char** argv) {
   app.require_subcommand(1);
 
   std::string claims_dir = ".rctx/claims";
-  std::string db_path = ".rctx/cache/index.db";
+  std::string db_path;  // empty -> computed per repo under the user cache dir
   std::string repo_path = ".";
   std::string base_ref = "main";
 
-  std::string new_id, new_scope = "general", new_volatility = "stable", template_path;
+  std::string new_id, new_volatility = "stable", template_path;
   std::vector<std::string> new_watches;
   bool force = false;
   auto* newcmd = app.add_subcommand("new", "create a new claim from a template");
-  newcmd->add_option("id", new_id,
-                      "claim id, used as the file name under the claims dir "
-                      "(defaults to a UTC timestamp id, e.g. 20260709-153245-a1b2c3)");
+  newcmd->add_option("path", new_id,
+                      "claim path under the claims dir, e.g. build/requires-env; the top "
+                      "folder is the claim's scope (defaults to a UTC timestamp id at the "
+                      "claims-dir root, e.g. 20260709-153245-a1b2c3)");
   newcmd->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
-  newcmd->add_option("--scope", new_scope, "claim scope")->capture_default_str();
   newcmd->add_option("--volatility", new_volatility, "\"stable\" or \"volatile\"")
       ->capture_default_str();
   // allow_extra_args(false): each --watch takes exactly one value, so a
@@ -142,14 +185,18 @@ int main(int argc, char** argv) {
   auto* list = app.add_subcommand("list", "parse claim files and print them as JSON");
   list->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
 
+  const char* db_help =
+      "index database path (default: a per-repo dir under $XDG_CACHE_HOME or ~/.cache; "
+      "the index is a disposable cache and is never stored inside the repo)";
   auto* index = app.add_subcommand("index", "build the derived FTS index from claims");
-  index->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
-  index->add_option("--db", db_path, "index database path")->capture_default_str();
+  auto* index_claims_opt =
+      index->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
+  index->add_option("--db", db_path, db_help);
 
   std::string query_expr;
   auto* query = app.add_subcommand("query", "full-text search the index");
   query->add_option("expr", query_expr, "FTS5 match expression")->required();
-  query->add_option("--db", db_path, "index database path")->capture_default_str();
+  query->add_option("--db", db_path, db_help);
 
   auto* status = app.add_subcommand("status", "current branch + files changed vs base ref");
   status->add_option("--repo", repo_path, "repository path")->capture_default_str();
@@ -216,14 +263,17 @@ int main(int argc, char** argv) {
       return 1;
     }
 
-    const std::string rendered =
-        rctx::render_claim_template(tmpl, new_id, new_scope, new_volatility, new_watches);
-    const auto parsed = rctx::parse_claim_text(rendered, out_path.string());
+    const std::string rendered = rctx::render_claim_template(tmpl, new_volatility, new_watches);
+    auto parsed = rctx::parse_claim_text(rendered, out_path.string());
     if (!parsed) {
       std::cerr << "error: rendered claim has no valid frontmatter; check --template"
                 << std::endl;
       return 1;
     }
+    // id and scope come from the file's path, not the template.
+    const auto ident = rctx::derive_identity(new_id + ".md");
+    parsed->scope = ident.scope;
+    parsed->id = ident.id;
 
     std::error_code ec;
     fs::create_directories(out_path.parent_path(), ec);
@@ -254,13 +304,24 @@ int main(int argc, char** argv) {
     }
     std::cout << out.dump(2) << std::endl;
   } else if (*index) {
+    const fs::path root = index_root();
+    if (db_path.empty()) db_path = rctx::default_index_path(root).string();
+    // Load claims from the same work-tree root the cache is keyed on. Otherwise
+    // `index` from a subdir loads an empty set (claims_dir is cwd-relative) and
+    // overwrites the shared root cache with nothing. An explicit -C still wins.
+    if (index_claims_opt->count() == 0) claims_dir = (root / ".rctx" / "claims").string();
     const auto claims = rctx::load_claims(claims_dir);
     rctx::build_index(db_path, claims);
     std::cerr << "indexed " << claims.size() << " claim(s) -> " << db_path << std::endl;
   } else if (*query) {
+    if (db_path.empty()) db_path = rctx::default_index_path(index_root()).string();
     nlohmann::json out = nlohmann::json::array();
-    for (const auto& h : rctx::search_index(db_path, query_expr)) {
-      out.push_back({{"id", h.id}, {"source_path", h.source_path}, {"snippet", h.snippet}});
+    // No DB yet means the repo has never been indexed; report empty rather than
+    // creating a stray empty cache file just to fail on the missing FTS table.
+    if (fs::exists(db_path)) {
+      for (const auto& h : rctx::search_index(db_path, query_expr)) {
+        out.push_back({{"id", h.id}, {"source_path", h.source_path}, {"snippet", h.snippet}});
+      }
     }
     std::cout << out.dump(2) << std::endl;
   } else if (*status) {
@@ -354,6 +415,10 @@ int main(int argc, char** argv) {
              rctx::read_files_at_ref(r.path, r.default_branch, ".rctx/claims")) {
           auto claim = rctx::parse_claim_text(content, r.url + "@" + r.default_branch + ":" + rel);
           if (!claim) continue;
+          // id/scope derive from the file's path within the other repo's claims dir.
+          const auto ident = rctx::derive_identity(fs::path(rel).lexically_relative(".rctx/claims"));
+          claim->scope = ident.scope;
+          claim->id = ident.id;
           for (const auto& imp : claim->impacts) {
             if (normalize_url(imp.url) == my_url) {
               out.push_back({{"from_repo", r.url},
@@ -382,12 +447,19 @@ int main(int argc, char** argv) {
     for (const char* name : {"post-checkout", "post-merge", "post-commit"}) {
       hooks[name] = install_hook(dir, name);
     }
+    // Keep .rctx/ committable no matter what the repo's ignore rules are.
+    const std::string root = rctx::repo_root(repo_path);
+    const std::string gitignore = ensure_gitignore(root.empty() ? fs::path{repo_path} : fs::path{root});
+    if (gitignore == "added" || gitignore == "created") {
+      std::cerr << "updated .gitignore to keep .rctx/ tracked — review and commit it" << std::endl;
+    }
     std::cout << nlohmann::json{{"registered",
                                  {{"url", e.url},
                                   {"path", e.path},
                                   {"branch", e.branch},
                                   {"default_branch", e.default_branch}}},
-                                {"hooks", hooks}}
+                                {"hooks", hooks},
+                                {"gitignore", gitignore}}
                      .dump(2)
               << std::endl;
   }

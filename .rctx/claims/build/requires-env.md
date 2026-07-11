@@ -1,10 +1,5 @@
 ---
-id: build-requires-env
-scope: build
 volatility: stable
-impacts:
-  - url: https://git.fcrozetta.app/fer/rctx
-    terms: [env, configuration]
 watches:
   - .env.example
 reverify: "test -f .env.example"

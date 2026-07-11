@@ -1,9 +1,7 @@
 ---
-id: api-openapi-contract
-scope: api
 volatility: volatile
 impacts:
-  - url: https://git.fcrozetta.app/fer/nephos
+  - url: https://github.com/fcrozetta/nephos
     terms: [openapi, contract, schema]
 watches:
   - openapi.json

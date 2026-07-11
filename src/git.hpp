@@ -13,6 +13,11 @@ namespace rctx {
 // parent directories), so callers can reject non-repo paths before registering.
 bool is_git_repo(const std::filesystem::path& repo_path);
 
+// Canonical absolute path to the work-tree root containing `path` (searches
+// parent dirs). Empty if `path` is not inside a git work tree. Each git
+// worktree reports its own root, so it keys a per-worktree cache.
+std::string repo_root(const std::filesystem::path& path);
+
 // Short name of the currently checked-out branch (empty if detached/unavailable).
 std::string current_branch(const std::filesystem::path& repo_path);
 

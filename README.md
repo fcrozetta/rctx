@@ -50,9 +50,9 @@ cd your-repo
 # One-time: register this repo and install git hooks that keep it in sync
 rctx setup
 
-# Write your first claim
-rctx new build-requires-env --scope build --watch .env.example
-$EDITOR .rctx/claims/build-requires-env.md   # fill in `reverify` and the body
+# Write your first claim (the top folder is its scope)
+rctx new build/requires-env --watch .env.example
+$EDITOR .rctx/claims/build/requires-env.md   # fill in `reverify` and the body
 
 # Index and search
 rctx index
@@ -67,6 +67,11 @@ volatile and worth re-checking after certain changes. rctx keeps these as
 Markdown files under `.rctx/claims/` so they're committed, reviewed in PRs,
 and searchable — instead of living in someone's head or a wiki page.
 
+Claims are organized as a file tree: the folder a claim lives in *is* its
+scope, and its path is its id. `.rctx/claims/build/requires-env.md` is the
+claim `build/requires-env` with scope `build`. Browse the tree on your git
+host and the layout speaks for itself — no tool required.
+
 Each claim can also declare **drift**: if a path it cares about changes, rctx
 flags it. And a claim can name another repo it **impacts**, so a change here
 can surface as relevant context over there.
@@ -79,13 +84,13 @@ finds.
 
 | Command | What it does |
 |---|---|
-| `rctx new [id]` | Create a new claim file from a template (id defaults to a UTC timestamp) |
+| `rctx new [path]` | Create a new claim file from a template; the path's top folder is its scope (defaults to a UTC timestamp at the claims-dir root) |
 | `rctx list` | Print every claim as JSON |
 | `rctx index` | Rebuild the local search index from claim files |
 | `rctx query "<expr>"` | Full-text search claims |
 | `rctx status` | Current branch + files changed vs. a base ref |
 | `rctx drift` | Claims whose watched paths changed vs. a base ref |
-| `rctx setup` | First-time setup: register this repo and install git hooks (alias: `rctx hook`) |
+| `rctx setup` | First-time setup: register this repo, install git hooks, and add a `.gitignore` rule keeping `.rctx/` tracked (alias: `rctx hook`) |
 | `rctx register` | Record this repo in the host-wide registry (git hooks run this for you) |
 | `rctx forget` | Remove this repo's entry from the registry (`--repo` targets another path; for a directory that no longer exists, use `rctx repos --prune`) |
 | `rctx repos` | List every rctx-registered repo (`--prune` drops entries whose path is gone) |
@@ -95,32 +100,30 @@ Run `rctx <command> --help` for the full flag list.
 
 ## Writing a claim
 
-`rctx new [id]` scaffolds a claim file for you:
+`rctx new <path>` scaffolds a claim file for you. The path is `scope/slug`:
 
 ```bash
-rctx new api-openapi-contract --scope api --volatility volatile --watch openapi.json
+rctx new api/openapi-contract --volatility volatile --watch openapi.json
 ```
 
-This writes `.rctx/claims/api-openapi-contract.md` with the frontmatter filled
-in and a `TODO` body to replace. Pass `--template <file>` to render from your
-own template instead of the built-in one; `--force` overwrites an existing
-claim file.
+This writes `.rctx/claims/api/openapi-contract.md` — scope `api`, id
+`api/openapi-contract` — with the frontmatter filled in and a `TODO` body to
+replace. Pass `--template <file>` to render from your own template instead of
+the built-in one; `--force` overwrites an existing claim file.
 
-Omit `id` and rctx generates one from the current UTC date and time plus a
-short random suffix, so it's legible on sight and sorts in creation order
-alongside your other claim files.
+Omit the path and rctx generates one from the current UTC date and time plus a
+short random suffix, landing at the claims-dir root with no scope:
 
 ```bash
-rctx new --scope build --watch .env.example
+rctx new --watch .env.example
 # -> created .rctx/claims/20260709-153245-a1b2c3.md
 ```
 
-A claim is Markdown with YAML frontmatter:
+A claim is Markdown with YAML frontmatter. Its scope and id are *not* in the
+frontmatter — they come from where the file lives:
 
 ```markdown
 ---
-id: api-openapi-contract          # unique identifier
-scope: api                        # a free-form grouping label
 volatility: volatile              # "stable" | "volatile"
 impacts:                          # other repos this claim affects
   - url: https://github.com/you/other-repo
