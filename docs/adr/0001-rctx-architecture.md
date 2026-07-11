@@ -22,13 +22,16 @@ repositories cloned on the same host.
 ## Decisions
 
 1. Claims are the committed source of truth. Each claim is a Markdown file with
-   YAML frontmatter under `.rctx/claims/`. Claims are human-legible and fully
-   usable without the tool. rctx never becomes required to read them.
+   YAML frontmatter under `.rctx/claims/`, organized as a scope filetree: the
+   folder a claim lives in is its scope and its path minus `.md` is its id, so
+   neither is stored in frontmatter (see Amendments). Claims are human-legible
+   and fully usable without the tool. rctx never becomes required to read them.
 
-2. The index is a disposable, derived cache. rctx builds a SQLite FTS5 index
-   under `.rctx/cache/` (gitignored, per host). It can be deleted and rebuilt
-   from the claim files at any time. Nothing load-bearing lives only in the
-   index.
+2. The index is a disposable, derived cache. rctx builds a SQLite FTS5 index in
+   a per-repo directory under the user cache (`$XDG_CACHE_HOME`, else
+   `~/.cache/rctx`), never inside the repo (see Amendments). It can be deleted
+   and rebuilt from the claim files at any time. Nothing load-bearing lives only
+   in the index.
 
 3. rctx is advisory. It reads, reports, and reindexes. It never mutates claims
    or code. On drift it asks the user or agent, who resolves it by editing
@@ -104,3 +107,22 @@ Open:
   suffix matching.
 - Whether drift should fetch the remote before comparing so that "the base moved
   ahead remotely" is caught.
+
+## Amendments
+
+### 2026-07-11
+
+Two refinements from the PoC, folded into decisions 1 and 2 above:
+
+- Claim identity is derived from the file's path, not from frontmatter. The
+  scope is the top-level folder under `.rctx/claims/`; the id is the path minus
+  `.md` (e.g. `build/requires-env`). One source of truth (the path), the tree
+  stays browseable without the tool, and cross-cutting topics live in `terms`
+  and FTS rather than a rigid folder hierarchy. A `git mv` re-scopes a claim;
+  nothing links by id, so that is safe.
+- The FTS index moved out of the repo. A cache does not belong in the work tree
+  even when gitignored (it pollutes `git status`, dies to `git clean -x`, and
+  duplicates per worktree). It now lives per repo, keyed by work-tree root so
+  each git worktree is isolated, under `$XDG_CACHE_HOME` (else `~/.cache/rctx`).
+  The host-global registry stays at `$RCTX_HOME`: it is host state, not a
+  throwaway cache, and has a different lifecycle.

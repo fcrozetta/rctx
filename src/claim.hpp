@@ -34,7 +34,21 @@ struct Claim {
 // frontmatter, or if the frontmatter is malformed YAML or has a field of the
 // wrong type. `source_label` is recorded as the claim's source_path (a file
 // path or a "<repo>@<ref>:<path>" label for claims read out of a git tree).
+//
+// `id` and `scope` are NOT read from frontmatter: a claim's identity is where
+// its file lives. Callers set c.id/c.scope with derive_identity() from the
+// file's path relative to the claims dir.
 std::optional<Claim> parse_claim_text(const std::string& text, const std::string& source_label);
+
+// A claim's identity, derived from where its file sits relative to the claims
+// dir (never from frontmatter). `scope` is the top-level folder, or "" for a
+// claim directly under the claims dir. `id` is the relative path with the .md
+// extension removed and '/' separators, e.g. "build/requires-env".
+struct ClaimIdentity {
+  std::string scope;
+  std::string id;
+};
+ClaimIdentity derive_identity(const std::filesystem::path& claims_relative_path);
 
 // Parse a single claim file. Returns nullopt if the file has no frontmatter
 // or fails to parse (see parse_claim_text).
@@ -48,13 +62,13 @@ void to_json(nlohmann::json& j, const Claim& c);
 // The built-in template used by `rctx new` when no `--template` is given.
 std::string default_claim_template();
 
-// Fill a claim template's `{{id}}`, `{{scope}}`, `{{volatility}}` and
-// `{{watches_block}}` placeholders. Each value is rendered as a quoted YAML
-// string scalar so metacharacters (e.g. a `*.json` watch glob) can't change
-// how the line parses. `{{watches_block}}` expands to a YAML `watches:` list
-// (or `watches: []` when `watches` is empty).
-std::string render_claim_template(const std::string& tmpl, const std::string& id,
-                                   const std::string& scope, const std::string& volatility,
+// Fill a claim template's `{{volatility}}` and `{{watches_block}}`
+// placeholders. `{{volatility}}` is rendered as a quoted YAML string scalar;
+// `{{watches_block}}` expands to a YAML `watches:` list (or `watches: []` when
+// `watches` is empty) with each glob quoted so metacharacters (e.g. a `*.json`
+// watch pattern) can't change how the line parses. id and scope are not
+// templated: they come from the claim file's path (see derive_identity()).
+std::string render_claim_template(const std::string& tmpl, const std::string& volatility,
                                    const std::vector<std::string>& watches);
 
 }  // namespace rctx

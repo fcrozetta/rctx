@@ -1,6 +1,4 @@
 ---
-id: build-requires-env
-scope: build
 volatility: stable
 impacts:
   - url: https://git.fcrozetta.app/fer/rctx

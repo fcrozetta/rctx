@@ -156,6 +156,18 @@ std::vector<std::pair<std::string, std::string>> read_files_at_ref(
 
 bool is_git_repo(const fs::path& repo_path) { return static_cast<bool>(open_repo(repo_path)); }
 
+std::string repo_root(const fs::path& path) {
+  git_repository* r = nullptr;
+  // _ext searches parent directories, so this works from any subdir of the repo.
+  if (git_repository_open_ext(&r, path.string().c_str(), 0, nullptr) != 0) return "";
+  Repo repo{r};
+  const char* wd = git_repository_workdir(repo.get());
+  if (!wd) return "";  // bare repo: no work tree to key on
+  std::error_code ec;
+  const fs::path canon = fs::weakly_canonical(fs::path{wd}, ec);
+  return (ec ? fs::path{wd} : canon).string();
+}
+
 std::string hooks_dir(const fs::path& repo_path) {
   Repo repo = open_repo(repo_path);
   if (!repo) return "";

@@ -608,6 +608,6 @@ msbuild.wrn
 
 # ---> rctx / vcpkg
 vcpkg_installed/
-.rctx/cache/
+# Note: the rctx FTS index is a cache and lives under ~/.cache/rctx, never in the repo.
 
 
