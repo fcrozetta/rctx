@@ -54,8 +54,8 @@ rctx setup
 rctx new build/requires-env --watch .env.example
 $EDITOR .rctx/claims/build/requires-env.md   # fill in `reverify` and the body
 
-# Index and search
-rctx index
+# Search. The index is a cache that rebuilds itself when it's stale, so you
+# don't have to run `rctx index` by hand (the git hooks refresh it too).
 rctx query "environment"
 ```
 
@@ -86,8 +86,8 @@ finds.
 |---|---|
 | `rctx new [path]` | Create a new claim file from a template; the path's top folder is its scope (defaults to a UTC timestamp at the claims-dir root) |
 | `rctx list` | Print every claim as JSON |
-| `rctx index` | Rebuild the local search index from claim files |
-| `rctx query "<expr>"` | Full-text search claims |
+| `rctx index` | Rebuild the local search index from claim files (usually automatic: `query` and the git hooks refresh it when stale) |
+| `rctx query "<expr>"` | Full-text search claims; rebuilds the index first if it's missing or stale |
 | `rctx status` | Current branch + files changed vs. a base ref |
 | `rctx drift` | Claims whose watched paths changed vs. a base ref |
 | `rctx setup` | First-time setup: register this repo, install git hooks, and add a `.gitignore` rule keeping `.rctx/` tracked (alias: `rctx hook`) |

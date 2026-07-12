@@ -7,6 +7,8 @@
 #include <stdexcept>
 #include <string>
 
+#include <unistd.h>
+
 #include <sqlite3.h>
 
 namespace fs = std::filesystem;
@@ -24,6 +26,11 @@ struct Db {
       sqlite3_close(handle);
       throw std::runtime_error("cannot open index db: " + msg);
     }
+    // Cheap insurance for concurrent access to this per-repo cache: wait on a
+    // contended lock instead of failing outright with SQLITE_BUSY (as the
+    // registry does). Rebuilds go through a private temp + atomic rename, so
+    // real contention on this handle is rare.
+    sqlite3_busy_timeout(handle, 3000);
   }
   ~Db() { sqlite3_close(handle); }
   Db(const Db&) = delete;
@@ -102,37 +109,73 @@ fs::path default_index_path(const fs::path& repo_root) {
   return cache_home() / "rctx" / key / "index.db";
 }
 
+bool index_stale(const fs::path& db_path, const fs::path& claims_dir) {
+  std::error_code ec;
+  if (!fs::exists(db_path, ec)) return true;
+  const auto db_time = fs::last_write_time(db_path, ec);
+  if (ec) return true;  // can't read the index's mtime: treat as stale, rebuild
+  // The db exists (checked above). If the claims tree is gone, any rows in the
+  // index are for claims that no longer exist, so rebuild to an empty index
+  // rather than keep serving them.
+  if (!fs::exists(claims_dir, ec)) return true;
+
+  // The claims-dir mtime bumps when a child is added or removed; each entry's
+  // mtime bumps on edit. Newer than the index anywhere means rebuild.
+  const auto dir_time = fs::last_write_time(claims_dir, ec);
+  if (!ec && dir_time > db_time) return true;
+  for (const auto& entry : fs::recursive_directory_iterator(claims_dir, ec)) {
+    std::error_code entry_ec;
+    const auto t = fs::last_write_time(entry.path(), entry_ec);
+    if (!entry_ec && t > db_time) return true;
+  }
+  return false;
+}
+
 void build_index(const fs::path& db_path, const std::vector<Claim>& claims) {
   if (db_path.has_parent_path()) fs::create_directories(db_path.parent_path());
 
-  Db db(db_path);
-  exec(db.handle, "DROP TABLE IF EXISTS claims_fts;");
-  exec(db.handle,
-       "CREATE VIRTUAL TABLE claims_fts USING fts5("
-       "id, scope, volatility, watches, terms, body, source_path UNINDEXED);");
+  // Build into a private temp file, then atomically rename it over db_path.
+  // Other processes (a git hook, a concurrent lazy query) therefore only ever
+  // observe a complete index — the old one or the new one — never a db that is
+  // still being built. That is what a plain rebuild in place gets wrong: the db
+  // file exists the moment it is opened, so a reader can pass the staleness
+  // check and then hit "no such table" (or two builders collide on DROP/CREATE)
+  // before the table is committed. Same directory keeps the rename atomic.
+  const fs::path tmp = db_path.string() + ".tmp." + std::to_string(::getpid());
+  std::error_code ec;
+  fs::remove(tmp, ec);  // clear any leftover temp from a previously killed run
 
-  exec(db.handle, "BEGIN;");
-  Stmt ins(db.handle,
-           "INSERT INTO claims_fts(id, scope, volatility, watches, terms, body, source_path)"
-           " VALUES(?,?,?,?,?,?,?);");
-  for (const auto& c : claims) {
-    std::vector<std::string> all_terms;
-    for (const auto& ref : c.impacts)
-      all_terms.insert(all_terms.end(), ref.terms.begin(), ref.terms.end());
+  {
+    Db db(tmp);
+    exec(db.handle,
+         "CREATE VIRTUAL TABLE claims_fts USING fts5("
+         "id, scope, volatility, watches, terms, body, source_path UNINDEXED);");
 
-    bind_text(ins.handle, 1, c.id);
-    bind_text(ins.handle, 2, c.scope);
-    bind_text(ins.handle, 3, c.volatility);
-    bind_text(ins.handle, 4, join(c.watches));
-    bind_text(ins.handle, 5, join(all_terms));
-    bind_text(ins.handle, 6, c.body);
-    bind_text(ins.handle, 7, c.source_path);
-    if (sqlite3_step(ins.handle) != SQLITE_DONE) {
-      throw std::runtime_error(std::string{"insert failed: "} + sqlite3_errmsg(db.handle));
+    exec(db.handle, "BEGIN;");
+    Stmt ins(db.handle,
+             "INSERT INTO claims_fts(id, scope, volatility, watches, terms, body, source_path)"
+             " VALUES(?,?,?,?,?,?,?);");
+    for (const auto& c : claims) {
+      std::vector<std::string> all_terms;
+      for (const auto& ref : c.impacts)
+        all_terms.insert(all_terms.end(), ref.terms.begin(), ref.terms.end());
+
+      bind_text(ins.handle, 1, c.id);
+      bind_text(ins.handle, 2, c.scope);
+      bind_text(ins.handle, 3, c.volatility);
+      bind_text(ins.handle, 4, join(c.watches));
+      bind_text(ins.handle, 5, join(all_terms));
+      bind_text(ins.handle, 6, c.body);
+      bind_text(ins.handle, 7, c.source_path);
+      if (sqlite3_step(ins.handle) != SQLITE_DONE) {
+        throw std::runtime_error(std::string{"insert failed: "} + sqlite3_errmsg(db.handle));
+      }
+      sqlite3_reset(ins.handle);
     }
-    sqlite3_reset(ins.handle);
-  }
-  exec(db.handle, "COMMIT;");
+    exec(db.handle, "COMMIT;");
+  }  // close the temp db (flush + drop its journal) before the rename
+
+  fs::rename(tmp, db_path);
 }
 
 std::vector<SearchHit> search_index(const fs::path& db_path, const std::string& query) {

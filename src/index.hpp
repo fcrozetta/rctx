@@ -24,6 +24,12 @@ struct SearchHit {
 // wipe-safe index.
 std::filesystem::path default_index_path(const std::filesystem::path& repo_root);
 
+// True if the index at db_path is missing, or older than anything in the
+// claims tree (files and directories are both checked, so adds, edits and
+// deletes all count). Used to lazily rebuild before a query so results are
+// never stale without the user remembering to run `index`.
+bool index_stale(const std::filesystem::path& db_path, const std::filesystem::path& claims_dir);
+
 // Create or rebuild the FTS5 index at db_path from the given claims.
 void build_index(const std::filesystem::path& db_path, const std::vector<Claim>& claims);
 
