@@ -51,4 +51,10 @@ if(RCTX_BUILD_TESTS)
   )
   target_link_libraries(rctx_tests PRIVATE rctx_core doctest::doctest)
   add_test(NAME rctx_tests COMMAND rctx_tests)
+
+  # Integration check: a handler error exits 1 cleanly, never aborts (issue #10).
+  add_test(
+    NAME rctx_cli_error_is_clean
+    COMMAND ${CMAKE_COMMAND} -DRCTX_BIN=$<TARGET_FILE:rctx>
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/tests/cli_error.cmake)
 endif()
