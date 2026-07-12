@@ -9,6 +9,7 @@
     "libgit2",
     "yaml-cpp",
     "cli11",
-    "nlohmann-json"
+    "nlohmann-json",
+    "doctest"
   ]
 }

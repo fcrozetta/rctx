@@ -42,6 +42,17 @@ cmake --build --preset release
 ./build/release/rctx --version
 ```
 
+### Tests
+
+`RCTX_BUILD_TESTS` is on by default, so the build above also builds the suite.
+Run it with:
+
+```bash
+ctest --test-dir build/release --output-on-failure
+```
+
+CI runs the same suite on every push and pull request.
+
 ## Quick start
 
 ```bash

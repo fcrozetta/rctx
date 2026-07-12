@@ -50,6 +50,7 @@ jobs:
           cmake -S . -B build/Release \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
+            -DRCTX_BUILD_TESTS=OFF \
             -DRCTX_VERSION="${GITHUB_REF_NAME}"
           cmake --build build/Release --config Release
 
@@ -120,6 +121,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
             -DVCPKG_TARGET_TRIPLET="${{ matrix.triplet }}" \
+            -DRCTX_BUILD_TESTS=OFF \
             -DRCTX_VERSION="${GITHUB_REF_NAME}"
           cmake --build build/Release --config Release
 

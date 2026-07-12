@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config
+
+      - name: Install vcpkg
+        run: |
+          set -euo pipefail
+          VCPKG_ROOT="${RUNNER_TEMP}/vcpkg"
+          VCPKG_COMMIT="$(awk -F'"' '/builtin-baseline/ { print $4 }' vcpkg.json)"
+          git clone --depth 1 https://github.com/microsoft/vcpkg.git "${VCPKG_ROOT}"
+          git -C "${VCPKG_ROOT}" fetch --depth 1 origin "${VCPKG_COMMIT}"
+          git -C "${VCPKG_ROOT}" checkout "${VCPKG_COMMIT}"
+          "${VCPKG_ROOT}/bootstrap-vcpkg.sh" -disableMetrics
+          echo "VCPKG_ROOT=${VCPKG_ROOT}" >> "${GITHUB_ENV}"
+
+      - name: Configure and build (with tests)
+        run: |
+          cmake -S . -B build/ci \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_TOOLCHAIN_FILE="${VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" \
+            -DRCTX_BUILD_TESTS=ON
+          cmake --build build/ci
+
+      - name: Run tests
+        run: ctest --test-dir build/ci --output-on-failure

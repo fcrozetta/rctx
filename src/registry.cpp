@@ -1,5 +1,7 @@
 #include "registry.hpp"
 
+#include <algorithm>
+#include <cctype>
 #include <cstdlib>
 #include <stdexcept>
 
@@ -73,6 +75,13 @@ fs::path registry_path() {
   }
   const char* h = std::getenv("HOME");
   return fs::path{h ? h : "."} / ".rctx" / "registry.db";
+}
+
+std::string normalize_url(std::string u) {
+  std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c) { return std::tolower(c); });
+  if (u.size() >= 4 && u.compare(u.size() - 4, 4, ".git") == 0) u.erase(u.size() - 4);
+  if (!u.empty() && u.back() == '/') u.pop_back();
+  return u;
 }
 
 void register_repo(const RepoEntry& entry) {

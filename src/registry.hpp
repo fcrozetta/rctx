@@ -19,6 +19,11 @@ struct RepoEntry {
 
 std::filesystem::path registry_path();
 
+// Canonicalize a git remote URL for identity comparison: lowercase, drop a
+// trailing ".git", drop a trailing "/". Used to match a claim's declared
+// impact URL against a registered repo's origin URL.
+std::string normalize_url(std::string url);
+
 // Upsert a repo by its absolute path.
 void register_repo(const RepoEntry& entry);
 
