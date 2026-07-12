@@ -13,15 +13,12 @@
 //   setup    - first-time setup: register this repo and install git hooks
 //              (alias: hook)
 
-#include <algorithm>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <string>
 #include <system_error>
-
-#include <fnmatch.h>
 
 #include <CLI/CLI.hpp>
 #include <git2.h>
@@ -32,6 +29,7 @@
 #include "git.hpp"
 #include "index.hpp"
 #include "registry.hpp"
+#include "watch.hpp"
 
 #ifndef RCTX_VERSION
 #define RCTX_VERSION "0.0.0-dev"
@@ -40,30 +38,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-
-// Glob match a changed path against a claim's watch pattern.
-//   - no slash in pattern: match the file name (e.g. "*.json")
-//   - "**" in pattern: '*' crosses '/' (e.g. "docs/**")
-//   - otherwise: path glob where '*' stays within one segment
-bool watch_matches(const std::string& pattern, const std::string& path) {
-  if (pattern == path) return true;
-  if (pattern.find('/') == std::string::npos) {
-    return fnmatch(pattern.c_str(), fs::path(path).filename().string().c_str(), 0) == 0;
-  }
-  if (pattern.find("**") != std::string::npos) {
-    std::string collapsed = pattern;
-    for (size_t p; (p = collapsed.find("**")) != std::string::npos;) collapsed.replace(p, 2, "*");
-    return fnmatch(collapsed.c_str(), path.c_str(), 0) == 0;
-  }
-  return fnmatch(pattern.c_str(), path.c_str(), FNM_PATHNAME) == 0;
-}
-
-std::string normalize_url(std::string u) {
-  std::transform(u.begin(), u.end(), u.begin(), [](unsigned char c) { return std::tolower(c); });
-  if (u.size() >= 4 && u.compare(u.size() - 4, 4, ".git") == 0) u.erase(u.size() - 4);
-  if (!u.empty() && u.back() == '/') u.pop_back();
-  return u;
-}
 
 std::string canonical_path(const std::string& p) {
   std::error_code ec;
@@ -351,7 +325,7 @@ int main(int argc, char** argv) {
     for (const auto& c : rctx::load_claims(claims_dir)) {
       for (const auto& w : c.watches) {
         for (const auto& f : changed) {
-          if (watch_matches(w, f)) {
+          if (rctx::watch_matches(w, f)) {
             out.push_back({{"claim", c.id},
                            {"watched", w},
                            {"changed_file", f},
@@ -397,20 +371,20 @@ int main(int argc, char** argv) {
     }
   } else if (*impact) {
     const auto me = self_register(repo_path);
-    const std::string my_url = normalize_url(me.url);
+    const std::string my_url = rctx::normalize_url(me.url);
     nlohmann::json out = nlohmann::json::array();
 
     if (outbound) {
       // Which repos are cloned here (by normalized URL that resolves to a path).
       std::vector<std::string> cloned;
       for (const auto& r : rctx::list_repos()) {
-        if (fs::exists(r.path)) cloned.push_back(normalize_url(r.url));
+        if (fs::exists(r.path)) cloned.push_back(rctx::normalize_url(r.url));
       }
       const fs::path my_claims = fs::path{repo_path} / ".rctx" / "claims";
       for (const auto& c : rctx::load_claims(my_claims)) {
         for (const auto& imp : c.impacts) {
           const bool is_cloned =
-              std::find(cloned.begin(), cloned.end(), normalize_url(imp.url)) != cloned.end();
+              std::find(cloned.begin(), cloned.end(), rctx::normalize_url(imp.url)) != cloned.end();
           out.push_back({{"claim", c.id},
                          {"impacts", imp.url},
                          {"terms", imp.terms},
@@ -435,7 +409,7 @@ int main(int argc, char** argv) {
           claim->scope = ident.scope;
           claim->id = ident.id;
           for (const auto& imp : claim->impacts) {
-            if (normalize_url(imp.url) == my_url) {
+            if (rctx::normalize_url(imp.url) == my_url) {
               out.push_back({{"from_repo", r.url},
                              {"from_ref", r.default_branch},
                              {"claim", claim->id},
