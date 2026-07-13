@@ -143,7 +143,8 @@ bool index_stale(const fs::path& db_path, const fs::path& claims_dir) {
   return *newest > db_time;
 }
 
-void build_index(const fs::path& db_path, const std::vector<Claim>& claims) {
+void build_index(const fs::path& db_path, const std::vector<Claim>& claims,
+                 std::optional<fs::file_time_type> stamp) {
   if (db_path.has_parent_path()) fs::create_directories(db_path.parent_path());
 
   // Build into a private temp file, then atomically rename it over db_path.
@@ -187,21 +188,27 @@ void build_index(const fs::path& db_path, const std::vector<Claim>& claims) {
     exec(db.handle, "COMMIT;");
   }  // close the temp db (flush + drop its journal) before the rename
 
+  // Stamp the temp BEFORE the rename so the mtime publishes atomically with the
+  // index. Clamp to the build-finish time: a source with a future mtime (clock
+  // skew, restored files) must not push the index into the future, or a later
+  // ordinary edit (earlier than that future stamp) would be missed.
+  if (stamp) {
+    std::error_code ec;
+    const auto build_time = fs::last_write_time(tmp, ec);
+    const auto when = (!ec && *stamp > build_time) ? build_time : *stamp;
+    fs::last_write_time(tmp, when, ec);
+  }
   fs::rename(tmp, db_path);
 }
 
 std::size_t refresh_index(const fs::path& db_path, const fs::path& claims_dir) {
-  // Snapshot the newest source mtime BEFORE reading the claims. Stamping the
-  // rebuilt index with this (rather than the build-finish time) means a claim
-  // edited during the rebuild lands with an mtime past the stamp and is caught
-  // as stale next time, instead of being masked by a freshly-written index.
+  // Snapshot the newest source mtime BEFORE reading the claims, and hand it to
+  // build_index to stamp atomically. A claim edited during the rebuild lands
+  // with an mtime past the stamp and is caught stale next time, instead of
+  // being masked by a build-finish mtime.
   const auto snapshot = newest_source_mtime(claims_dir);
   const auto claims = load_claims(claims_dir);
-  build_index(db_path, claims);
-  if (snapshot) {
-    std::error_code ec;
-    fs::last_write_time(db_path, *snapshot, ec);  // best-effort stamp
-  }
+  build_index(db_path, claims, snapshot);
   return claims.size();
 }
 

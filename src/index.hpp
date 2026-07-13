@@ -5,6 +5,7 @@
 
 #include <cstddef>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -31,8 +32,12 @@ std::filesystem::path default_index_path(const std::filesystem::path& repo_root)
 // never stale without the user remembering to run `index`.
 bool index_stale(const std::filesystem::path& db_path, const std::filesystem::path& claims_dir);
 
-// Create or rebuild the FTS5 index at db_path from the given claims.
-void build_index(const std::filesystem::path& db_path, const std::vector<Claim>& claims);
+// Create or rebuild the FTS5 index at db_path from the given claims. If `stamp`
+// is set, the index's mtime is set to it (clamped to no later than the actual
+// build-finish time, so it never lands in the future) on the temp file *before*
+// the atomic rename, so the stamp is published atomically with the new index.
+void build_index(const std::filesystem::path& db_path, const std::vector<Claim>& claims,
+                 std::optional<std::filesystem::file_time_type> stamp = std::nullopt);
 
 // Load the claims under claims_dir and (re)build the index at db_path from them.
 // Stamps the index's mtime with the newest source mtime observed *before* the
