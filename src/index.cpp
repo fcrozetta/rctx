@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <optional>
 #include <stdexcept>
 #include <string>
 
@@ -109,29 +110,41 @@ fs::path default_index_path(const fs::path& repo_root) {
   return cache_home() / "rctx" / key / "index.db";
 }
 
+namespace {
+
+// Newest mtime among claims_dir and everything under it. Both files and
+// directories count, so adds, edits and deletes all move it (a dir's mtime
+// bumps when a child is added or removed). nullopt if the directory is gone.
+std::optional<fs::file_time_type> newest_source_mtime(const fs::path& claims_dir) {
+  std::error_code ec;
+  if (!fs::exists(claims_dir, ec)) return std::nullopt;
+  auto newest = fs::last_write_time(claims_dir, ec);
+  if (ec) newest = fs::file_time_type::min();
+  std::error_code it_ec;
+  for (const auto& entry : fs::recursive_directory_iterator(claims_dir, it_ec)) {
+    std::error_code entry_ec;
+    const auto t = fs::last_write_time(entry.path(), entry_ec);
+    if (!entry_ec && t > newest) newest = t;
+  }
+  return newest;
+}
+
+}  // namespace
+
 bool index_stale(const fs::path& db_path, const fs::path& claims_dir) {
   std::error_code ec;
   if (!fs::exists(db_path, ec)) return true;
   const auto db_time = fs::last_write_time(db_path, ec);
   if (ec) return true;  // can't read the index's mtime: treat as stale, rebuild
-  // The db exists (checked above). If the claims tree is gone, any rows in the
-  // index are for claims that no longer exist, so rebuild to an empty index
-  // rather than keep serving them.
-  if (!fs::exists(claims_dir, ec)) return true;
-
-  // The claims-dir mtime bumps when a child is added or removed; each entry's
-  // mtime bumps on edit. Newer than the index anywhere means rebuild.
-  const auto dir_time = fs::last_write_time(claims_dir, ec);
-  if (!ec && dir_time > db_time) return true;
-  for (const auto& entry : fs::recursive_directory_iterator(claims_dir, ec)) {
-    std::error_code entry_ec;
-    const auto t = fs::last_write_time(entry.path(), entry_ec);
-    if (!entry_ec && t > db_time) return true;
-  }
-  return false;
+  const auto newest = newest_source_mtime(claims_dir);
+  // A gone claims tree means the index holds rows for claims that no longer
+  // exist, so rebuild it to empty rather than keep serving them.
+  if (!newest) return true;
+  return *newest > db_time;
 }
 
-void build_index(const fs::path& db_path, const std::vector<Claim>& claims) {
+void build_index(const fs::path& db_path, const std::vector<Claim>& claims,
+                 std::optional<fs::file_time_type> stamp) {
   if (db_path.has_parent_path()) fs::create_directories(db_path.parent_path());
 
   // Build into a private temp file, then atomically rename it over db_path.
@@ -175,7 +188,28 @@ void build_index(const fs::path& db_path, const std::vector<Claim>& claims) {
     exec(db.handle, "COMMIT;");
   }  // close the temp db (flush + drop its journal) before the rename
 
+  // Stamp the temp BEFORE the rename so the mtime publishes atomically with the
+  // index. Clamp to the build-finish time: a source with a future mtime (clock
+  // skew, restored files) must not push the index into the future, or a later
+  // ordinary edit (earlier than that future stamp) would be missed.
+  if (stamp) {
+    std::error_code ec;
+    const auto build_time = fs::last_write_time(tmp, ec);
+    const auto when = (!ec && *stamp > build_time) ? build_time : *stamp;
+    fs::last_write_time(tmp, when, ec);
+  }
   fs::rename(tmp, db_path);
+}
+
+std::size_t refresh_index(const fs::path& db_path, const fs::path& claims_dir) {
+  // Snapshot the newest source mtime BEFORE reading the claims, and hand it to
+  // build_index to stamp atomically. A claim edited during the rebuild lands
+  // with an mtime past the stamp and is caught stale next time, instead of
+  // being masked by a build-finish mtime.
+  const auto snapshot = newest_source_mtime(claims_dir);
+  const auto claims = load_claims(claims_dir);
+  build_index(db_path, claims, snapshot);
+  return claims.size();
 }
 
 std::vector<SearchHit> search_index(const fs::path& db_path, const std::string& query) {

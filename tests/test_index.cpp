@@ -89,3 +89,49 @@ TEST_CASE("index_stale sees missing db, edited claims, and a removed tree") {
 
   fs::remove_all(dir);
 }
+
+TEST_CASE("refresh_index stamps the index with the source snapshot time") {
+  const fs::path dir = uniq_dir("stamp");
+  const fs::path claims_root = dir / ".rctx" / "claims";
+  const fs::path claim = claims_root / "api" / "c.md";
+  fs::create_directories(claim.parent_path());
+  { std::ofstream(claim) << "---\nvolatility: stable\n---\nbody\n"; }
+  const fs::path db = dir / "index.db";
+
+  // Backdate the whole source tree an hour into the past.
+  const auto past = fs::file_time_type::clock::now() - std::chrono::hours(1);
+  fs::last_write_time(claim, past);
+  fs::last_write_time(claim.parent_path(), past);
+  fs::last_write_time(claims_root, past);
+
+  CHECK(refresh_index(db, claims_root) == 1);
+
+  // The index carries the source snapshot time (~1h ago), not the build-finish
+  // time (~now); that is what stops an edit-during-rebuild from being masked.
+  CHECK(fs::last_write_time(db) < fs::file_time_type::clock::now() - std::chrono::minutes(1));
+  CHECK_FALSE(index_stale(db, claims_root));
+
+  fs::remove_all(dir);
+}
+
+TEST_CASE("refresh_index clamps the stamp and never pushes the index into the future") {
+  const fs::path dir = uniq_dir("future");
+  const fs::path claims_root = dir / ".rctx" / "claims";
+  const fs::path claim = claims_root / "api" / "c.md";
+  fs::create_directories(claim.parent_path());
+  { std::ofstream(claim) << "---\nvolatility: stable\n---\nbody\n"; }
+  const fs::path db = dir / "index.db";
+
+  // A source with a future mtime (clock skew or a restored file).
+  const auto future = fs::file_time_type::clock::now() + std::chrono::hours(1);
+  fs::last_write_time(claim, future);
+
+  refresh_index(db, claims_root);
+
+  // The index is clamped to build-finish, not pushed to the future, so the
+  // future-dated source still reads as newer: a safe over-rebuild, never stale.
+  CHECK(fs::last_write_time(db) < future);
+  CHECK(index_stale(db, claims_root));
+
+  fs::remove_all(dir);
+}
