@@ -109,6 +109,11 @@ finds.
 
 Run `rctx <command> --help` for the full flag list.
 
+> **Note:** `--claims-dir`/`-C` pointing at a directory outside the repo should be
+> paired with `--db`. The default cache mirrors this repo's `.rctx/claims`, and
+> `query` (which has no `-C`) rebuilds it from there, so a bare `index -C /elsewhere`
+> would be overwritten by the next `query`.
+
 ## Writing a claim
 
 `rctx new <path>` scaffolds a claim file for you. The path is `scope/slug`:

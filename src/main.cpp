@@ -169,7 +169,12 @@ int run_cli(int argc, char** argv) {
       "the index is a disposable cache and is never stored inside the repo)";
   auto* index = app.add_subcommand("index", "build the derived FTS index from claims");
   auto* index_claims_opt =
-      index->add_option("-C,--claims-dir", claims_dir, "claims directory")->capture_default_str();
+      index
+          ->add_option("-C,--claims-dir", claims_dir,
+                       "claims directory; pair with --db when it points outside this repo, "
+                       "or a later `query` (which has no -C) rebuilds the default cache from "
+                       ".rctx/claims and overwrites it")
+          ->capture_default_str();
   index->add_option("--db", db_path, db_help);
 
   std::string query_expr;
@@ -289,9 +294,8 @@ int run_cli(int argc, char** argv) {
     // `index` from a subdir loads an empty set (claims_dir is cwd-relative) and
     // overwrites the shared root cache with nothing. An explicit -C still wins.
     if (index_claims_opt->count() == 0) claims_dir = (root / ".rctx" / "claims").string();
-    const auto claims = rctx::load_claims(claims_dir);
-    rctx::build_index(db_path, claims);
-    std::cerr << "indexed " << claims.size() << " claim(s) -> " << db_path << std::endl;
+    const auto n = rctx::refresh_index(db_path, claims_dir);
+    std::cerr << "indexed " << n << " claim(s) -> " << db_path << std::endl;
   } else if (*query) {
     const bool db_defaulted = db_path.empty();
     const fs::path root = index_root();
@@ -301,7 +305,7 @@ int run_cli(int argc, char** argv) {
     // An explicit --db is left untouched: the caller pointed at that index.
     if (db_defaulted) {
       const fs::path cdir = root / ".rctx" / "claims";
-      if (rctx::index_stale(db_path, cdir)) rctx::build_index(db_path, rctx::load_claims(cdir));
+      if (rctx::index_stale(db_path, cdir)) rctx::refresh_index(db_path, cdir);
     }
     nlohmann::json out = nlohmann::json::array();
     // With a default db it now always exists (just built above). A missing
