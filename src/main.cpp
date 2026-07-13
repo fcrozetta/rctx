@@ -132,7 +132,7 @@ fs::path index_root() {
 
 }  // namespace
 
-int main(int argc, char** argv) {
+int run_cli(int argc, char** argv) {
   CLI::App app{"rctx - repository-bounded context and claims"};
   app.set_version_flag("--version", std::string{RCTX_VERSION});
   app.require_subcommand(1);
@@ -454,4 +454,16 @@ int main(int argc, char** argv) {
   }
 
   return 0;
+}
+
+int main(int argc, char** argv) {
+  // Single catch-all so any handler failure (a locked or corrupt db, a bad
+  // path, a git error) exits cleanly with a message instead of aborting on an
+  // uncaught exception. Matters more now that git hooks invoke rctx for you.
+  try {
+    return run_cli(argc, argv);
+  } catch (const std::exception& e) {
+    std::cerr << "error: " << e.what() << std::endl;
+    return 1;
+  }
 }
